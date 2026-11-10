@@ -1,2093 +1,610 @@
--- Aurora Menu v4 (тільки інтерфейс + візуальні крила) — виправлена версія
--- LocalScript -> StarterGui (або StarterPlayerScripts)
--- Підключення функцій: _G.Aurora.Hooks["Aim Assist"] = function(value) ... end
--- Відкрити/закрити: RightShift або тап по значку
+--=====================================================================
+--  ANGEL WINGS -> Aurora Menu : інтеграція в 3 кроки
+--  Крок 1: вставити ЧАСТИНУ 1 перед рядком
+--          ---------------------------------------------------------------- ВКЛАДКИ (вміст)
+--  Крок 2: вставити ЧАСТИНУ 2 в кінець функції buildFun (перед її "end")
+--  Крок 3: вставити ЧАСТИНУ 3 в кнопку Unload (першим рядком у callback)
+--=====================================================================
 
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
 
-local lp = Players.LocalPlayer
-
----------------------------------------------------------------- НАЛАШТУВАННЯ
-local SCALE = 0.72
-local LOGO = "rbxassetid://119019582244016"
-local FONT = Enum.Font.Arcade
-local CUSTOM_FONT = nil -- Font.new("rbxassetid://ID_ШРИФТУ")
-local DRAG_SMOOTH = 22
-local HOTKEY = Enum.KeyCode.RightShift
-local THEMES = {
-	"129218217963882",
-	"126225202594489",
-	"81522608761386",
-	"70457674253829",
-	"87842701397260",
-}
-local VIDEOS = {
-	-- "1234567890",
-}
-local ACCENTS = {
-	{ "Purple", Color3.fromRGB(124, 92, 255) },
-	{ "Blue", Color3.fromRGB(60, 140, 255) },
-	{ "Red", Color3.fromRGB(255, 80, 100) },
-	{ "Green", Color3.fromRGB(50, 210, 120) },
-	{ "Pink", Color3.fromRGB(255, 100, 200) },
-	{ "Orange", Color3.fromRGB(255, 150, 50) },
-}
-----------------------------------------------------------------
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "AuroraMenu"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.Parent = lp:WaitForChild("PlayerGui")
-
-local C = {
-	bg = Color3.fromRGB(10, 9, 16),
-	side = Color3.fromRGB(20, 19, 28),
-	text = Color3.fromRGB(241, 240, 245),
-	muted = Color3.fromRGB(140, 138, 153),
-	off = Color3.fromRGB(42, 41, 53),
-	on = ACCENTS[1][2],
-}
-
-local flags = { notify = true }
-local curScale = SCALE
-
--- Налаштування й хуки для майбутніх функцій
-local Settings, Hooks = {}, {}
-local function fire(flag, value)
-	if not flag then return end
-	Settings[flag] = value
-	local h = Hooks[flag]
-	if h then task.spawn(h, value) end
-end
-
--- З'єднання (щоб чисто вивантажити меню)
-local conns = {}
-local function bind(signal, fn)
-	local c = signal:Connect(fn)
-	table.insert(conns, c)
-	return c
-end
-
-local accentFns = {}
-local function onAccent(fn)
-	table.insert(accentFns, fn)
-end
-local function setAccent(col)
-	C.on = col
-	for _, fn in ipairs(accentFns) do
-		fn(col)
-	end
-end
-
-local function tw(obj, t, props, style, dir)
-	local tween = TweenService:Create(
-		obj,
-		TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
-		props
-	)
-	tween:Play()
-	return tween
-end
-
-local function setFont(o)
-	if CUSTOM_FONT then
-		o.FontFace = CUSTOM_FONT
-	else
-		o.Font = FONT
-	end
-end
-
-local function corner(obj, r)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, r)
-	c.Parent = obj
-	return c
-end
-
-local function label(parent, text, size, color, pos, sz)
-	local l = Instance.new("TextLabel")
-	l.BackgroundTransparency = 1
-	l.Text = text
-	l.TextSize = size
-	l.TextColor3 = color
-	l.TextXAlignment = Enum.TextXAlignment.Left
-	l.TextTruncate = Enum.TextTruncate.AtEnd
-	setFont(l)
-	l.Position = pos
-	l.Size = sz
-	l.Parent = parent
-	return l
-end
-
-local uiScale = Instance.new("UIScale")
-uiScale.Scale = SCALE
-
----------------------------------------------------------------- СПОВІЩЕННЯ
-local toast = nil
-local function notify(text)
-	if not flags.notify then return end
-	if toast then toast:Destroy() end
-	local f = Instance.new("Frame")
-	f.AnchorPoint = Vector2.new(0.5, 0)
-	f.Size = UDim2.fromOffset(260, 38)
-	f.Position = UDim2.new(0.5, 0, 0, -60)
-	f.BackgroundColor3 = C.bg
-	f.BorderSizePixel = 0
-	f.ZIndex = 20
-	f.Parent = gui
-	corner(f, 19)
-	local st = Instance.new("UIStroke")
-	st.Color = C.on
-	st.Thickness = 2
-	st.Parent = f
-	local l = label(f, text, 14, C.text, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1))
-	l.TextXAlignment = Enum.TextXAlignment.Center
-	l.ZIndex = 21
-	toast = f
-	tw(f, 0.45, { Position = UDim2.new(0.5, 0, 0, 18) }, Enum.EasingStyle.Back)
-	task.delay(1.8, function()
-		if toast ~= f then return end
-		local t = tw(f, 0.3, { Position = UDim2.new(0.5, 0, 0, -60) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		t.Completed:Connect(function()
-			if toast == f then toast = nil end
-			f:Destroy()
-		end)
-	end)
-end
-
----------------------------------------------------------------- ЕФЕКТ НАТИСКАННЯ
-local function isPress(i)
-	return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
-end
-
-local function pressFx(btn, ripple, noScale)
-	local sc = Instance.new("UIScale")
-	sc.Parent = btn
-	if ripple then btn.ClipsDescendants = true end
-	btn.InputBegan:Connect(function(i)
-		if not isPress(i) then return end
-		if not noScale then tw(sc, 0.1, { Scale = 0.95 }) end
-		if ripple then
-			local rel = (Vector2.new(i.Position.X, i.Position.Y) - btn.AbsolutePosition) / uiScale.Scale
-			local r = Instance.new("Frame")
-			r.AnchorPoint = Vector2.new(0.5, 0.5)
-			r.Position = UDim2.fromOffset(rel.X, rel.Y)
-			r.Size = UDim2.fromOffset(0, 0)
-			r.BackgroundColor3 = Color3.new(1, 1, 1)
-			r.BackgroundTransparency = 0.8
-			r.BorderSizePixel = 0
-			r.ZIndex = 5
-			r.Parent = btn
-			corner(r, 200)
-			tw(r, 0.55, { Size = UDim2.fromOffset(150, 150), BackgroundTransparency = 1 })
-			task.delay(0.6, function() r:Destroy() end)
-		end
-	end)
-	btn.InputEnded:Connect(function(i)
-		if isPress(i) then
-			if not noScale then tw(sc, 0.3, { Scale = 1 }, Enum.EasingStyle.Back) end
-		end
-	end)
-end
-
----------------------------------------------------------------- ПЕРЕТЯГУВАННЯ
-local HOLD_TIME = 0.18 -- скільки треба затиснути, щоб "схопити" меню
-local HOLD_SLOP = 24 -- наскільки може здригнутись палець під час утримання (пікселі)
-local function makeDraggable(handle, target, onClick, onPress, onRelease)
-	local dragInput, moved, held, dead = nil, false, false, false
-	local startInput, startPos
-	local goal, cur = Vector2.zero, Vector2.zero
-	local conn
-	local holdId = 0
-
-	local function apply()
-		target.Position = UDim2.new(
-			startPos.X.Scale, startPos.X.Offset + cur.X,
-			startPos.Y.Scale, startPos.Y.Offset + cur.Y
-		)
-	end
-
-	local function ensureLoop()
-		if conn then return end
-		conn = RunService.RenderStepped:Connect(function(dt)
-			cur = cur:Lerp(goal, 1 - math.exp(-dt * DRAG_SMOOTH))
-			apply()
-			if not dragInput and (goal - cur).Magnitude < 0.3 then
-				cur = goal
-				apply()
-				conn:Disconnect()
-				conn = nil
-			end
-		end)
-	end
-
-	handle.InputBegan:Connect(function(i)
-		if dragInput or not isPress(i) then return end
-		dragInput, moved, held, dead = i, false, false, false
-		startInput = Vector2.new(i.Position.X, i.Position.Y)
-		startPos = target.Position
-		cur, goal = Vector2.zero, Vector2.zero
-		holdId += 1
-		local my = holdId
-		task.delay(HOLD_TIME, function()
-			if dragInput == i and holdId == my and not dead then
-				held = true -- тепер можна тягнути
-				if onPress then onPress() end
-			end
-		end)
-	end)
-
-	bind(UserInputService.InputChanged, function(i)
-		if not dragInput then return end
-		local mine
-		if dragInput.UserInputType == Enum.UserInputType.Touch then
-			mine = (i == dragInput)
-		else
-			mine = (i.UserInputType == Enum.UserInputType.MouseMovement)
-		end
-		if not mine then return end
-		local d = Vector2.new(i.Position.X, i.Position.Y) - startInput
-		if not held then
-			-- палець поїхав до утримання = це свайп, а не перетягування
-			if d.Magnitude > HOLD_SLOP then dead = true end
-			return
-		end
-		if not moved and d.Magnitude > 3 then
-			moved = true
-			ensureLoop()
-		end
-		if moved then goal = d end
-	end)
-
-	bind(UserInputService.InputEnded, function(i)
-		if not dragInput then return end
-		local mine = (i == dragInput)
-			or (dragInput.UserInputType == Enum.UserInputType.MouseButton1 and i.UserInputType == Enum.UserInputType.MouseButton1)
-		if not mine then return end
-		dragInput = nil
-		if held then
-			if onRelease then onRelease() end
-		elseif not dead and onClick then
-			onClick() -- звичайний короткий тап
-		end
-	end)
-end
-
----------------------------------------------------------------- ВІКНО
-local holder = Instance.new("Frame")
-holder.Size = UDim2.fromOffset(560 * SCALE, 340 * SCALE)
-holder.Position = UDim2.new(0.5, -280 * SCALE, 0.5, -170 * SCALE)
-holder.BackgroundTransparency = 1
-holder.Visible = false
-holder.Parent = gui
-
-local win = Instance.new("CanvasGroup")
-win.AnchorPoint = Vector2.new(0.5, 0.5)
-win.Position = UDim2.fromScale(0.5, 0.5)
-win.Size = UDim2.fromOffset(560, 340)
-win.BackgroundColor3 = C.bg
-win.BorderSizePixel = 0
-win.GroupTransparency = 1
-win.Parent = holder
-corner(win, 24)
-uiScale.Parent = win
-
-local bgImage = Instance.new("ImageLabel")
-bgImage.Size = UDim2.fromScale(1, 1)
-bgImage.BackgroundTransparency = 1
-bgImage.ImageTransparency = 1
-bgImage.ScaleType = Enum.ScaleType.Crop
-bgImage.ZIndex = 1
-bgImage.Parent = win
-corner(bgImage, 24)
-
--- ВИПРАВЛЕННЯ 1: VideoFrame застарів і може не створюватись -> pcall + заглушка
-local okV, bgVideo = pcall(Instance.new, "VideoFrame")
-if okV and bgVideo then
-	bgVideo.Size = UDim2.fromScale(1, 1)
-	bgVideo.BackgroundTransparency = 1
-	bgVideo.Looped = true
-	bgVideo.Volume = 0
-	bgVideo.Visible = false
-	bgVideo.ZIndex = 1
-	bgVideo.Parent = win
-else
-	bgVideo = { Pause = function() end, Play = function() end, Visible = false }
-end
-
-local dim = Instance.new("Frame")
-dim.Size = UDim2.fromScale(1, 1)
-dim.BackgroundColor3 = Color3.new(0, 0, 0)
-dim.BackgroundTransparency = 1
-dim.BorderSizePixel = 0
-dim.ZIndex = 1
-dim.Parent = win
-corner(dim, 24)
-
-local function applyTheme(id, kind)
-	bgVideo:Pause()
-	bgVideo.Visible = false
-	bgImage.ImageTransparency = 1
-	if kind == "video" then
-		bgVideo.Video = "rbxassetid://" .. id
-		bgVideo.Visible = true
-		bgVideo.Playing = true
-		bgVideo:Play()
-		dim.BackgroundTransparency = 0.45
-	elseif id then
-		bgImage.Image = "rbxthumb://type=Asset&id=" .. id .. "&w=420&h=420"
-		bgImage.ImageTransparency = 0
-		dim.BackgroundTransparency = 0.45
-	else
-		dim.BackgroundTransparency = 1
-	end
-end
-
-local function applyScale(s)
-	local dw, dh = 560 * (s - curScale) / 2, 340 * (s - curScale) / 2
-	holder.Size = UDim2.fromOffset(560 * s, 340 * s)
-	holder.Position = holder.Position - UDim2.fromOffset(dw, dh)
-	curScale = s
-	uiScale.Scale = s
-end
-
--- Шапка
-local top = Instance.new("Frame")
-top.Size = UDim2.new(1, 0, 0, 56)
-top.BackgroundTransparency = 1
-top.ZIndex = 2
-top.Parent = win
-
-local logo = Instance.new("ImageLabel")
-logo.Size = UDim2.fromOffset(40, 40)
-logo.Position = UDim2.fromOffset(16, 8)
-logo.BackgroundTransparency = 1
-logo.Image = LOGO
-logo.ScaleType = Enum.ScaleType.Fit
-logo.Parent = top
-corner(logo, 10)
-label(top, "Aurora", 20, C.text, UDim2.fromOffset(66, 8), UDim2.fromOffset(200, 24))
-label(top, "universal script  v4", 12, C.muted, UDim2.fromOffset(66, 31), UDim2.fromOffset(200, 16))
-
-makeDraggable(top, holder, nil, function()
-	tw(uiScale, 0.15, { Scale = curScale * 0.96 })
-end, function()
-	tw(uiScale, 0.25, { Scale = curScale }, Enum.EasingStyle.Back)
-end)
-
-local sidebar = Instance.new("Frame")
-sidebar.Size = UDim2.new(0, 150, 1, -66)
-sidebar.Position = UDim2.fromOffset(10, 58)
-sidebar.BackgroundTransparency = 1
-sidebar.Parent = win
-
-local pages = Instance.new("Frame")
-pages.Size = UDim2.new(1, -180, 1, -70)
-pages.Position = UDim2.fromOffset(170, 58)
-pages.BackgroundTransparency = 1
-pages.ClipsDescendants = true
-pages.Parent = win
-
----------------------------------------------------------------- ЕЛЕМЕНТИ
-local rowsByPane = {}
-local compactMode = false
-local counters = {}
-local function nextOrder(pane)
-	counters[pane] = (counters[pane] or 0) + 1
-	return counters[pane]
-end
-
-local function card(pane, h)
-	local row = Instance.new("Frame")
-	row.BackgroundColor3 = C.side
-	row.BackgroundTransparency = 0.25
-	row.BorderSizePixel = 0
-	row.ClipsDescendants = true
-	row.Size = UDim2.new(1, -8, 0, h)
-	row.LayoutOrder = nextOrder(pane)
-	row.Parent = pane
-	corner(row, 12)
-	rowsByPane[pane] = rowsByPane[pane] or {}
-	table.insert(rowsByPane[pane], row)
-	return row
-end
-
-local function section(pane, text)
-	local l = label(pane, text, 13, C.muted, UDim2.new(), UDim2.new(1, -8, 0, 20))
-	l.LayoutOrder = nextOrder(pane)
-	return l
-end
-
-local function hitArea(row)
-	local hit = Instance.new("TextButton")
-	hit.Text = ""
-	hit.AutoButtonColor = false
-	hit.BackgroundTransparency = 1
-	hit.Size = UDim2.fromScale(1, 1)
-	hit.Parent = row
-	pressFx(hit, true, true)
-	return hit
-end
-
-local function toggle(pane, title, desc, flag, default, callback)
-	local row = card(pane, compactMode and 40 or 54)
-	local state = default or false
-	Settings[flag or title] = state
-	local hit = hitArea(row)
-	label(row, title, 16, C.text, UDim2.fromOffset(12, compactMode and 10 or 8), UDim2.fromOffset(300, 20))
-	if not compactMode then
-		label(row, desc, 12, C.muted, UDim2.fromOffset(12, 29), UDim2.fromOffset(300, 16))
-	end
-	local t = Instance.new("Frame")
-	t.AnchorPoint = Vector2.new(0.5, 0.5)
-	t.Size = UDim2.fromOffset(48, 26)
-	t.Position = UDim2.new(1, -36, 0.5, 0)
-	t.BackgroundColor3 = state and C.on or C.off
-	t.Parent = row
-	corner(t, 13)
-	local knob = Instance.new("Frame")
-	knob.Size = UDim2.fromOffset(20, 20)
-	knob.Position = UDim2.fromOffset(state and 25 or 3, 3)
-	knob.BackgroundColor3 = Color3.fromRGB(236, 233, 245)
-	knob.Parent = t
-	corner(knob, 10)
-	onAccent(function(c)
-		if state then tw(t, 0.3, { BackgroundColor3 = c }) end
-	end)
-	hit.Activated:Connect(function()
-		state = not state
-		tw(knob, 0.3, { Position = UDim2.fromOffset(state and 25 or 3, 3) }, Enum.EasingStyle.Back)
-		tw(t, 0.25, { BackgroundColor3 = state and C.on or C.off })
-		if callback then callback(state) end
-		fire(flag or title, state)
-		notify(title .. (state and ": ON" or ": OFF"))
-	end)
-	return row
-end
-
--- Тягнення по області. axisLock = true: на дотик береться лише горизонтальний жест,
--- вертикальний лишається для прокрутки списку
-local function dragArea(area, pane, fn, axisLock, onBegin, onEnd)
-	local hit = Instance.new("TextButton")
-	hit.Text = ""
-	hit.BackgroundTransparency = 1
-	hit.AutoButtonColor = false
-	hit.Size = UDim2.fromScale(1, 1)
-	hit.ZIndex = 4
-	hit.Parent = area
-	local drag, startPos, active, dead = nil, nil, false, false
-	local function at(p)
-		local rx = math.clamp((p.X - area.AbsolutePosition.X) / area.AbsoluteSize.X, 0, 1)
-		local ry = math.clamp((p.Y - area.AbsolutePosition.Y) / area.AbsoluteSize.Y, 0, 1)
-		fn(rx, ry)
-	end
-	local function activate()
-		active = true
-		pane.ScrollingEnabled = false
-		if onBegin then onBegin() end
-	end
-	hit.InputBegan:Connect(function(i)
-		if drag or not isPress(i) then return end
-		drag, active, dead = i, false, false
-		startPos = Vector2.new(i.Position.X, i.Position.Y)
-		if not axisLock or i.UserInputType ~= Enum.UserInputType.Touch then
-			activate()
-			at(i.Position)
-		end
-	end)
-	bind(UserInputService.InputChanged, function(i)
-		if not drag or dead then return end
-		local mine
-		if drag.UserInputType == Enum.UserInputType.Touch then
-			mine = (i == drag)
-		else
-			mine = (i.UserInputType == Enum.UserInputType.MouseMovement)
-		end
-		if not mine then return end
-		if not active then
-			local d = Vector2.new(i.Position.X, i.Position.Y) - startPos
-			if d.Magnitude < 6 then return end
-			if math.abs(d.X) > math.abs(d.Y) then
-				activate()
-			else
-				dead = true -- вертикальний свайп: це прокрутка
-				return
-			end
-		end
-		at(i.Position)
-	end)
-	bind(UserInputService.InputEnded, function(i)
-		if not drag then return end
-		local mine = (i == drag)
-			or (drag.UserInputType == Enum.UserInputType.MouseButton1 and i.UserInputType == Enum.UserInputType.MouseButton1)
-		if not mine then return end
-		if not active and not dead then at(i.Position) end -- короткий тап = встановити значення
-		drag = nil
-		if active then
-			active = false
-			pane.ScrollingEnabled = true
-			if onEnd then onEnd() end
-		end
-		dead = false
-	end)
-end
-
-local function slider(pane, title, desc, min, max, default, flag, callback, suffix)
-	local row = card(pane, compactMode and 54 or 66)
-	suffix = suffix or ""
-	local value = default
-	Settings[flag or title] = value
-	local ty = compactMode and 4 or 6
-	label(row, title, 16, C.text, UDim2.fromOffset(12, ty), UDim2.fromOffset(220, 20))
-	if not compactMode then
-		label(row, desc, 12, C.muted, UDim2.fromOffset(12, 25), UDim2.fromOffset(300, 16))
-	end
-	local num = label(row, tostring(value) .. suffix, 16, C.text, UDim2.new(1, -112, 0, ty), UDim2.fromOffset(100, 20))
-	num.TextXAlignment = Enum.TextXAlignment.Right
-
-	local track = Instance.new("Frame")
-	track.Position = UDim2.new(0, 12, 0, compactMode and 36 or 50)
-	track.Size = UDim2.new(1, -24, 0, 6)
-	track.BackgroundColor3 = C.off
-	track.Parent = row
-	corner(track, 3)
-	local fill = Instance.new("Frame")
-	fill.Size = UDim2.fromScale((value - min) / (max - min), 1)
-	fill.BackgroundColor3 = C.on
-	fill.BorderSizePixel = 0
-	fill.Parent = track
-	corner(fill, 3)
-	local knob = Instance.new("Frame")
-	knob.AnchorPoint = Vector2.new(0.5, 0.5)
-	knob.Size = UDim2.fromOffset(14, 14)
-	knob.Position = UDim2.fromScale(1, 0.5)
-	knob.BackgroundColor3 = Color3.fromRGB(236, 233, 245)
-	knob.Parent = fill
-	corner(knob, 7)
-	onAccent(function(c) tw(fill, 0.3, { BackgroundColor3 = c }) end)
-
-	local zone = Instance.new("Frame")
-	zone.BackgroundTransparency = 1
-	zone.Position = UDim2.new(0, 12, 0, (compactMode and 36 or 50) - 12)
-	zone.Size = UDim2.new(1, -24, 0, 30)
-	zone.Parent = row
-	dragArea(zone, pane, function(rel)
-		local v = math.floor(min + rel * (max - min) + 0.5)
-		fill.Size = UDim2.fromScale(rel, 1)
-		if v ~= value then
-			value = v
-			num.Text = tostring(v) .. suffix
-			if callback then callback(v) end
-			fire(flag or title, v)
-		end
-	end, true, function()
-		tw(knob, 0.15, { Size = UDim2.fromOffset(18, 18) })
-	end, function()
-		tw(knob, 0.2, { Size = UDim2.fromOffset(14, 14) }, Enum.EasingStyle.Back)
-	end)
-	return row
-end
-
-local function pill(row, text)
-	local b = Instance.new("TextButton")
-	b.Text = text
-	b.TextSize = 14
-	b.TextColor3 = C.text
-	setFont(b)
-	b.AutoButtonColor = false
-	b.BackgroundColor3 = C.off
-	b.AnchorPoint = Vector2.new(0.5, 0.5)
-	b.Size = UDim2.fromOffset(104, 30)
-	b.Position = UDim2.new(1, -64, 0.5, 0)
-	b.Parent = row
-	corner(b, 10)
-	pressFx(b, false)
-	return b
-end
-
-local function button(pane, title, desc, btnText, callback)
-	local row = card(pane, compactMode and 40 or 54)
-	label(row, title, 16, C.text, UDim2.fromOffset(12, compactMode and 10 or 8), UDim2.fromOffset(250, 20))
-	if not compactMode then
-		label(row, desc, 12, C.muted, UDim2.fromOffset(12, 29), UDim2.fromOffset(250, 16))
-	end
-	local b = pill(row, btnText)
-	onAccent(function(c) tw(b, 0.3, { BackgroundColor3 = c }) end)
-	b.BackgroundColor3 = C.on
-	b.Activated:Connect(function()
-		if callback then callback() end
-	end)
-	return row
-end
-
-local function selector(pane, title, desc, options, default, flag, callback)
-	local row = card(pane, 54)
-	local idx = default or 1
-	Settings[flag or title] = options[idx]
-	label(row, title, 16, C.text, UDim2.fromOffset(12, 8), UDim2.fromOffset(250, 20))
-	label(row, desc, 12, C.muted, UDim2.fromOffset(12, 29), UDim2.fromOffset(250, 16))
-	local b = pill(row, options[idx])
-	b.Activated:Connect(function()
-		idx = idx % #options + 1
-		b.Text = options[idx]
-		if callback then callback(options[idx]) end
-		fire(flag or title, options[idx])
-		notify(title .. ": " .. options[idx])
-	end)
-	return row
-end
-
-local function grid(pane, size)
-	size = size or 54
-	local g = Instance.new("Frame")
-	g.BackgroundTransparency = 1
-	g.AutomaticSize = Enum.AutomaticSize.Y
-	g.Size = UDim2.new(1, -8, 0, 0)
-	g.LayoutOrder = nextOrder(pane)
-	g.Parent = pane
-	local l = Instance.new("UIGridLayout")
-	l.CellSize = UDim2.fromOffset(size, size)
-	l.CellPadding = UDim2.fromOffset(6, 6)
-	l.SortOrder = Enum.SortOrder.LayoutOrder
-	l.Parent = g
-	return g
-end
-
-local function cellButton(g, order, size)
-	local wrap = Instance.new("Frame")
-	wrap.BackgroundTransparency = 1
-	wrap.LayoutOrder = order
-	wrap.Parent = g
-	local b = Instance.new("TextButton")
-	b.Text = ""
-	b.AutoButtonColor = false
-	b.AnchorPoint = Vector2.new(0.5, 0.5)
-	b.Position = UDim2.fromScale(0.5, 0.5)
-	b.Size = UDim2.fromScale(1, 1)
-	b.BackgroundColor3 = C.side
-	b.Parent = wrap
-	corner(b, (size or 54) / 2)
-	pressFx(b, false)
-	return b
-end
-
----------------------------------------------------------------- ВІЗУАЛЬНІ КРИЛА v3 + HALO (бачиш лише ти)
--- v4 (ПІР'Я): асиметричне опахало зі стрижнем (rachis), скручування пір'їн вздовж довжини,
---   розщеплені "пальці" на кінчиках махових, пухнасті пір'їнки біля плеча, інерція й
---   запізнення кожної пір'їни (пружинна вторинна анімація), природніше тріпотіння.
--- Що нового у v3:
---   * ВИГНУТІ ПІР'ЇНИ: кожна довга пір'їна складається з 2-3 сегментів, що плавно згинаються
---     до кінчика й звужуються (загострений кінчик). Кінці "хльостають" під час помахів;
---   * ГРАДІЄНТ КОЛЬОРУ: від основи до кінчика пір'я світлішає, кінчики яскраво світяться;
---   * SHIMMER: по крилу біжить хвиля світла;
---   * СЛІДИ (Trails) за кінчиками крил і ІСКРИ (Sparkles), що летять від пір'я при помахах;
---   * ФІЗИКА: інерція від бігу вбік, ширяння при падінні, помах при зльоті,
---     "приземлення" з відскоком, пір'я розкривається віялом на помаху, вітер тріпоче пір'я;
---   * ЯКІСТЬ: Low / Medium / High (кількість пір'я) - для слабких телефонів;
---   * ХАОС: повзунок Chaos (стиснуто коефіцієнтом CALM).
--- Анімація процедурна: на землі - дихання, біг - крила назад, в повітрі - помахи,
--- падіння - крила складаються, при вмиканні - плавно розкриваються.
-local Wings = {
-	enabled = false, scheme = "Neon", size = 0.85, speed = 5, chaos = 25, neon = true,
-	quality = "High", trail = true, sparks = true, shimmer = true,
-	folder = nil, torso = nil, light = nil, recs = {}, anim = nil, open = 0,
-	fx = { trails = {}, emit = {} },
-}
-local Halo = {
-	enabled = false, speed = 5, t = 0, open = 0,
-	folder = nil, head = nil, recs = {},
-}
-
-local SIDES = { 1, -1 }
-local WN = Vector3.new(0, 0, 1) -- нормаль площини крила
-local WHITE, BLACK = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
-local function mix(a, b, t) return a:Lerp(b, math.clamp(t, 0, 1)) end
-local function smooth(x) x = math.clamp(x, 0, 1) return x * x * (3 - 2 * x) end
-
--- Шарнір на нижній частині спини
-local function hingeCF(s, sweep)
-	return CFrame.new(s * 0.28, 0.35, 0.30) * CFrame.Angles(0, -s * sweep, 0)
-end
-
--- ---------- палітри: [1] первинні, [2] другорядні, [3] покривні / світлі кінчики, [4] гребінь / голова halo
-local PAL_DEFAULT = {
-	Color3.fromRGB(196, 199, 208), Color3.fromRGB(216, 219, 226),
-	Color3.fromRGB(178, 181, 190), Color3.fromRGB(150, 152, 162),
-}
-local SCHEMES = {
-	Neon = { Color3.fromRGB(110, 215, 255), Color3.fromRGB(190, 240, 255), Color3.fromRGB(235, 252, 255), Color3.fromRGB(255, 255, 255) },
-	White = { Color3.fromRGB(246, 248, 255), Color3.fromRGB(255, 255, 255), Color3.fromRGB(234, 239, 250), Color3.fromRGB(225, 208, 170) },
-	Gold = { Color3.fromRGB(255, 215, 110), Color3.fromRGB(255, 235, 160), Color3.fromRGB(255, 248, 210), Color3.fromRGB(200, 150, 60) },
-	Dark = { Color3.fromRGB(28, 28, 38), Color3.fromRGB(42, 40, 56), Color3.fromRGB(62, 58, 82), Color3.fromRGB(90, 85, 100) },
-	Ice = { Color3.fromRGB(150, 205, 255), Color3.fromRGB(190, 225, 255), Color3.fromRGB(240, 250, 255), Color3.fromRGB(220, 240, 255) },
-	Fire = { Color3.fromRGB(255, 140, 40), Color3.fromRGB(255, 195, 70), Color3.fromRGB(255, 235, 130), Color3.fromRGB(200, 60, 20) },
-	Galaxy = { Color3.fromRGB(90, 70, 230), Color3.fromRGB(150, 95, 255), Color3.fromRGB(255, 120, 230), Color3.fromRGB(225, 205, 255) },
-}
-
-local function curPal(clk)
-	local sc = Wings.scheme
-	if sc == "Default" then return PAL_DEFAULT end
-	if SCHEMES[sc] then return SCHEMES[sc] end
-	if sc == "Accent" then
-		return { mix(C.on, BLACK, 0.2), C.on, mix(C.on, WHITE, 0.45), mix(C.on, WHITE, 0.7) }
-	end
-	local h = clk * 0.1 -- Rainbow
-	return {
-		Color3.fromHSV(h % 1, 0.75, 1), Color3.fromHSV((h + 0.08) % 1, 0.65, 1),
-		Color3.fromHSV((h + 0.16) % 1, 0.45, 1), Color3.fromHSV((h + 0.5) % 1, 0.3, 1),
+--=====================================================================
+-- ЧАСТИНА 1 — модуль крил (вставити перед "ВКЛАДКИ (вміст)")
+--=====================================================================
+---------------------------------------------------------------- ANGEL WINGS (багатошарові крила + ефекти)
+local AngelWings = {}
+do
+	local CFG = {
+		Material = Enum.Material.SmoothPlastic,
+		Thick = 0.07,
+		FeatherDrop = 0.45,
+		HaloRadius = 0.75,
+		SpeedIdle = 1.4, AmpIdle = 5,
+		SpeedWalk = 2.2, AmpWalk = 9,
+		SpeedAir = 5.0, AmpAir = 34,
+		YawSpread = 25,
+		YawFold = 78, RollFold = 20, ElbowFold = -30, WristFold = -20,
 	}
-end
 
-local wClock = 0
+	local PALETTES = {
+		{ name = "White", base = Color3.fromRGB(248,248,255), tip = Color3.fromRGB(200,215,255), covert = Color3.fromRGB(255,255,255), rachis = Color3.fromRGB(255,225,160) },
+		{ name = "Gold",  base = Color3.fromRGB(205,150,40),  tip = Color3.fromRGB(255,228,140), covert = Color3.fromRGB(240,200,90),  rachis = Color3.fromRGB(255,245,190) },
+		{ name = "Black", base = Color3.fromRGB(28,28,34),    tip = Color3.fromRGB(75,70,95),    covert = Color3.fromRGB(45,45,58),    rachis = Color3.fromRGB(160,150,190) },
+		{ name = "Ice",   base = Color3.fromRGB(140,200,255), tip = Color3.fromRGB(235,250,255), covert = Color3.fromRGB(190,235,255), rachis = Color3.fromRGB(255,255,255) },
+		{ name = "Fire",  base = Color3.fromRGB(140,25,25),   tip = Color3.fromRGB(255,150,45),  covert = Color3.fromRGB(215,75,30),   rachis = Color3.fromRGB(255,210,100) },
+		{ name = "Pink",  base = Color3.fromRGB(255,150,200), tip = Color3.fromRGB(255,228,242), covert = Color3.fromRGB(255,190,225), rachis = Color3.fromRGB(255,255,255) },
+	}
+	local SCALES = {
+		{ name = "Mini", v = 0.6 }, { name = "Medium", v = 0.9 },
+		{ name = "Large", v = 1.2 }, { name = "Huge", v = 1.6 },
+	}
 
--- Фарбування крил: основа -> світлий кінчик (tint), затемнення (shade), хвиля shimmer (pos)
-local function wingsPaint(clk)
-	local pal = curPal(clk)
-	local sh = Wings.shimmer
-	for _, r in ipairs(Wings.recs) do
-		local col = mix(pal[r.role], pal[3], r.tint)
-		col = mix(col, BLACK, r.shade)
-		if sh then
-			local w = 0.5 + 0.5 * math.sin(clk * 2.4 - r.pos * 8)
-			col = mix(col, WHITE, w * w * w * 0.5)
-		end
-		r.part.Color = col
-	end
-	if Wings.light then Wings.light.Color = pal[2] end
-	local fx = Wings.fx
-	if #fx.trails > 0 then
-		local cs = ColorSequence.new(pal[3], pal[1])
-		for _, t in ipairs(fx.trails) do t.Color = cs end
-	end
-	if #fx.emit > 0 then
-		local cs = ColorSequence.new(pal[3], pal[2])
-		for _, e in ipairs(fx.emit) do e.Color = cs end
-	end
-end
+	local state = {
+		wings = false, anim = true, glow = false, sparkles = true, fold = false,
+		feathers = true, trails = true, aura = true, halo = false,
+		paletteIdx = 1, scaleIdx = 2,
+	}
 
-local function haloPaint(clk)
-	local pal = curPal(clk)
-	for _, h in ipairs(Halo.recs) do
-		h.part.Color = mix(pal[1], pal[4], h.u)
-	end
-end
+	local char, humanoid, rootPart, torso
+	local wingsFolder, haloFolder, haloWeld, haloBase
+	local recolor, ripples, wingList, emitters = {}, {}, {}, {}
+	local trails, lights, tipParts, haloParts = {}, {}, {}, {}
+	local falling = {}
+	local dead = false
 
-local function wingsClear()
-	if Wings.folder then Wings.folder:Destroy() end
-	Wings.folder, Wings.torso, Wings.anim, Wings.light = nil, nil, nil, nil
-	Wings.recs = {}
-	Wings.fx = { trails = {}, emit = {} }
-end
+	local fxFolder = Instance.new("Folder")
+	fxFolder.Name = "AngelWingsFX"
+	fxFolder.Parent = workspace
 
-local function haloClear()
-	if Halo.folder then Halo.folder:Destroy() end
-	Halo.folder, Halo.head = nil, nil
-	Halo.recs = {}
-end
+	local P = {
+		S = Vector3.new(0.0, 0.0, 0),
+		E = Vector3.new(1.1, 1.0, 0),
+		W = Vector3.new(2.6, 1.9, 0),
+		T = Vector3.new(3.9, 2.1, 0),
+	}
 
--- Bloom (м'яке світіння яскравих деталей). Працює лише коли увімкнені крила або halo
-local bloomPref = true
-local function updateBloom()
-	local want = bloomPref and (Wings.enabled or Halo.enabled)
-	local b = Lighting:FindFirstChild("AuroraBloom")
-	if want then
-		if not b then
-			b = Instance.new("BloomEffect")
-			b.Name = "AuroraBloom"
-			b.Intensity = 0.9
-			b.Size = 28
-			b.Threshold = 0.9
-			b.Parent = Lighting
-		end
-	elseif b then
-		b:Destroy()
-	end
-end
-
--- ---------- геометричні помічники (усе в системі координат тулуба)
-local function setSize(r, v)
-	local c = r.part.Size
-	if math.abs(c.X - v.X) + math.abs(c.Y - v.Y) + math.abs(c.Z - v.Z) > 0.004 then
-		r.part.Size = v
-	end
-end
-
-local function place(r, cf, size)
-	setSize(r, Vector3.new(math.max(size.X, 0.03), math.max(size.Y, 0.03), math.max(size.Z, 0.03)))
-	r.weld.C0 = cf
-end
-
--- асиметричний змах: швидкий вниз, повільний вгору
-local function flapWave(p)
-	return math.sin(p) + 0.35 * math.sin(2 * p - 0.6)
-end
-
--- =====================================================================
--- ФОРМА КРИЛА (права сторона; ліва дзеркалиться). x - назовні, y - вгору, z - до глядача (товщина).
--- Початок координат - шарнір.
--- =====================================================================
--- Кістки руки (від суглоба до суглоба). Вужчі крила - зменшіть X, вищі - збільшіть Y.
-local ARM = {
-	Vector3.new(0.34, 0.83, 0),
-	Vector3.new(0.37, 0.59, 0),
-	Vector3.new(0.42, 0.43, 0),
-}
-local ARM_LEN, ARM_TOTAL = {}, 0
-for i, v in ipairs(ARM) do
-	ARM_LEN[i] = v.Magnitude
-	ARM_TOTAL += v.Magnitude
-end
-
--- точка на руці за довжиною дуги u (0..1) -> номер кістки і позиція на ній
-local function onArm(u)
-	local d = math.clamp(u, 0, 1) * ARM_TOTAL
-	for i = 1, #ARM do
-		if d <= ARM_LEN[i] or i == #ARM then
-			return i, math.clamp(d / ARM_LEN[i], 0, 1)
-		end
-		d -= ARM_LEN[i]
-	end
-	return #ARM, 1
-end
-
-local PIV = -90 -- кут (градуси), до якого "складається" віяло
-local ZSPAN = 0.22 -- наскільки внутрішні пір'їни лежать вище (ближче до глядача), ніж зовнішні
-
--- t = 0 (біля шарніра, звисають вниз) ... 1 (кінчик крила, дивиться вгору вздовж руки)
-local function fAngle(t) return -85 + 140 * (t ^ 1.25) end
-local function fLen(t)
-	if t < 0.7 then return 0.95 + 0.50 * smooth(t / 0.7) end
-	return 1.45 - 0.30 * smooth((t - 0.7) / 0.3)
-end
-local function fWidth(t) return 0.46 - 0.14 * smooth((t - 0.55) / 0.45) end
-local function fArc(t) return 0.16 + 0.84 * t end
-local function zF(t) return ZSPAN * (1 - t) end -- висота шару довгих пір'їн
-local function zArc(u) return zF(math.clamp((u - 0.16) / 0.84, 0, 1)) end -- те саме за довжиною дуги
-local function tiltOf(t) return 0.08 + 0.16 * t end -- підйом кінчика (чаша)
-
--- Сегменти довгої пір'їни: частка довжини, ширини й товщини (кінчик вужчий і тонший)
-local SEGF = {
-	[2] = { len = { 0.58, 0.42 }, wid = { 1.0, 0.55 }, thk = { 1.0, 0.65 } },
-	[3] = { len = { 0.38, 0.34, 0.28 }, wid = { 1.0, 0.86, 0.48 }, thk = { 1.0, 0.9, 0.62 } },
-}
-
--- Ряди покривних (чим менше рядів, тим довші лусочки)
-local ROWS2 = { { off = 0.00, ln = 0.40 }, { off = 0.30, ln = 0.42 } }
-local ROWS3 = { { off = 0.00, ln = 0.30 }, { off = 0.20, ln = 0.32 }, { off = 0.38, ln = 0.34 } }
-local ROWS4 = {
-	{ off = 0.00, ln = 0.24 }, { off = 0.13, ln = 0.26 },
-	{ off = 0.26, ln = 0.28 }, { off = 0.40, ln = 0.30 },
-}
-
--- Якість: кількість пір'їн, сегментів, покривних, іскор
-local QUALITY = {
-	Low = { flight = 14, cov = 12, rows = ROWS2, ridge = 6, stray = 3, segs = 2, sparks = 4, shaft = false, fringe = false, down = 0 },
-	Medium = { flight = 18, cov = 16, rows = ROWS3, ridge = 8, stray = 5, segs = 3, sparks = 8, shaft = true, fringe = true, down = 6 },
-	High = { flight = 24, cov = 22, rows = ROWS4, ridge = 10, stray = 6, segs = 3, sparks = 12, shaft = true, fringe = true, down = 12 },
-}
-
--- Повертає (функцію анімації, special): special.tips - кінчики для слідів, special.sparks - для іскор
-local function buildWing(mk, Q)
-	local items = {}
-	local special = { tips = {}, sparks = {} }
-	local rng = Random.new(20260) -- фіксоване зерно: крила щоразу однакові
-	local function R(a, b) return a + (b - a) * rng:NextNumber() end
-
-	-- Спокійніший розкид: стискає випадкове значення до середини діапазону.
-	-- CALM: 0 = ідеально рівно, 1 = дуже хаотично
-	local CALM = 0.45
-	local function Jt(a, b)
-		local m = (a + b) / 2
-		return m + (R(a, b) - m) * CALM
+	local function colorFor(kind, frac)
+		local pal = PALETTES[state.paletteIdx]
+		if kind == "covert" then return pal.covert
+		elseif kind == "rachis" then return pal.rachis end
+		return pal.base:Lerp(pal.tip, frac)
 	end
 
-	local NS = Q.segs
-	local SG = SEGF[NS]
-	local ROWS = Q.rows
-
-	-- сегменти однієї пір'їни: далі від основи - світліше (tint) й світліша хвиля (pos)
-	local function mkSegs(role, shade, t, tb)
-		local segs = {}
-		for i = 1, NS do
-			local f = (i - 1) / math.max(NS - 1, 1)
-			segs[i] = mk("ball", role, shade * (1 - 0.8 * f), tb + 0.08 + 0.62 * f + 0.2 * t, t + 0.12 * f)
-		end
-		return segs
+	local function newPart(size, color, parent)
+		local p = Instance.new("Part")
+		p.Size = size
+		p.Color = color
+		p.Material = state.glow and Enum.Material.Neon or CFG.Material
+		p.Anchored = false
+		p.CanCollide = false
+		p.CanTouch = false
+		p.CanQuery = false
+		p.Massless = true
+		p.CastShadow = false
+		p.CFrame = torso.CFrame
+		p.Parent = parent
+		return p
 	end
 
-	-- стрижень (rachis): тонка яскрава лінія вздовж кожного сегмента
-	local function mkShaft(role, t)
-		local sh = {}
-		for i = 1, NS do
-			local f = (i - 1) / math.max(NS - 1, 1)
-			sh[i] = mk("ball", role, 0, 0.75 + 0.2 * f, t + 0.12 * f)
-		end
-		return sh
+	local function weld(part0, part1, c0)
+		local w = Instance.new("Weld")
+		w.Part0 = part0
+		w.Part1 = part1
+		w.C0 = c0
+		w.C1 = CFrame.new()
+		w.Parent = part1
+		return w
 	end
 
-	-- два розщеплені "пальці" на кінчику махової пір'їни
-	local function mkFringe(role, t)
-		return { mk("ball", role, 0, 0.9, t), mk("ball", role, 0, 0.9, t) }
+	local function makeEmitter(parent, S)
+		local pal = PALETTES[state.paletteIdx]
+		local e = Instance.new("ParticleEmitter")
+		e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+		e.Rate = 3
+		e.Lifetime = NumberRange.new(1.2, 2.2)
+		e.Speed = NumberRange.new(0.2, 0.8)
+		e.SpreadAngle = Vector2.new(180, 180)
+		e.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.3, 0.35 * S),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		e.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.2, 0.1),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		e.LightEmission = 1
+		e.Acceleration = Vector3.new(0, -0.6, 0)
+		e.Rotation = NumberRange.new(0, 360)
+		e.RotSpeed = NumberRange.new(-60, 60)
+		e.Color = ColorSequence.new(pal.covert, pal.rachis)
+		e.Enabled = state.sparkles
+		e.Parent = parent
+		emitters[#emitters + 1] = e
 	end
 
-	for _, s in ipairs(SIDES) do
-		-- нижній шар довгих пір'їн (зі зсувом на пів кроку - закриває щілини у віялі)
-		for k = 1, Q.flight - 1 do
-			local t = (k - 0.5) / (Q.flight - 1)
-			local b, bt = onArm(fArc(t))
-			local v = ARM[b]
-			items[#items + 1] = {
-				kind = "under", s = s, b = b,
-				rel = Vector3.new(s * v.X * bt, v.Y * bt, 0),
-				t = t, ang = fAngle(t), len = fLen(t) * 0.93, w = fWidth(t), th = 0.09,
-				jl = Jt(0.78, 1.22), ja = Jt(-7, 7), jw = Jt(0.8, 1.25), jt = Jt(-0.08, 0.08), jc = Jt(-0.04, 0.04), tw = Jt(-0.45, 0.45),
-				fa = R(0.005, 0.025), fs = R(1.1, 2.6), fp = R(0, 6.28),
-				z = zF(t) - 0.075 + R(-0.01, 0.01),
-				order = 0.9 * t,
-				segs = mkSegs(2, R(0.10, 0.30), t, -0.1),
-			}
-		end
-		-- верхній шар довгих пір'їн (вигнуті, зі світлим загостреним кінчиком)
-		for k = 1, Q.flight do
-			local t = (k - 1) / (Q.flight - 1)
-			local b, bt = onArm(fArc(t))
-			local v = ARM[b]
-			local role = (t > 0.55) and 1 or 2
-			local jl = Jt(0.8, 1.28)
-			if rng:NextNumber() < 0.06 then jl = jl * R(0.8, 0.92) end -- рідкісна трохи коротша пір'їна
-			local it = {
-				kind = "flight", s = s, b = b,
-				rel = Vector3.new(s * v.X * bt, v.Y * bt, 0),
-				t = t, ang = fAngle(t), len = fLen(t), w = fWidth(t), th = 0.10,
-				jl = jl, ja = Jt(-6, 6), jw = Jt(0.8, 1.3), jt = Jt(-0.1, 0.1), jc = Jt(-0.04, 0.04), tw = Jt(-0.45, 0.45),
-				fa = R(0.005, 0.03), fs = R(1.1, 2.8), fp = R(0, 6.28),
-				z = zF(t) + R(-0.01, 0.01),
-				order = 0.9 * t,
-				segs = mkSegs(role, R(0.0, 0.22), t, 0),
-				shaft = Q.shaft and mkShaft(role, t) or nil,
-				fringe = (Q.fringe and t > 0.6) and mkFringe(role, t) or nil,
-			}
-			items[#items + 1] = it
-			-- кінчики найдовших пір'їн отримують сліди, кожна 4-та - іскри
-			if k == Q.flight or k == math.floor(Q.flight * 0.8) then
-				table.insert(special.tips, it.segs[NS])
-			elseif k % 4 == 0 and t > 0.55 then
-				table.insert(special.sparks, it.segs[NS])
-			end
-		end
-		-- покривні (лусочки лежать впритул на довгих пір'ях)
-		for j = 1, Q.cov do
-			local t = (j - 1) / (Q.cov - 1)
-			local b, bt = onArm(fArc(t))
-			local v = ARM[b]
-			local L = fLen(t)
-			local W = fWidth(t) * 0.78
-			for ri, row in ipairs(ROWS) do
-				items[#items + 1] = {
-					kind = "cov", s = s, b = b,
-					rel = Vector3.new(s * v.X * bt, v.Y * bt, 0),
-					t = t, ang = fAngle(t), off = row.off * L, ln = row.ln * L, w = W, th = 0.085,
-					jl = Jt(0.85, 1.2), ja = Jt(-5, 5), jw = Jt(0.85, 1.2), jt = Jt(-0.05, 0.05),
-					fa = R(0.003, 0.018), fs = R(1.0, 2.5), fp = R(0, 6.28),
-					z = zF(t) + 0.065 + (#ROWS - ri) * 0.05 + 0.0006 * j,
-					order = 0.9 * t + 0.05,
-					body = mk("ball", 3, 0.03 * (ri - 1) + R(0.0, 0.15), 0.15 + 0.1 * ri / #ROWS, t),
-				}
-			end
-		end
-		-- кілька довших пір'їн, що трохи вибиваються з крила
-		for j = 1, Q.stray do
-			local t = R(0.25, 0.95)
-			local b, bt = onArm(fArc(t))
-			local v = ARM[b]
-			local role = (t > 0.55) and 1 or 2
-			local it = {
-				kind = "stray", s = s, b = b,
-				rel = Vector3.new(s * v.X * bt, v.Y * bt, 0),
-				t = t, ang = fAngle(t), len = fLen(t), w = R(0.18, 0.26), th = 0.07,
-				jl = R(1.05, 1.28), ja = R(-9, 11), jw = 1, jt = R(0.0, 0.15), jc = R(0.0, 0.08), tw = R(-0.3, 0.3),
-				fa = R(0.01, 0.04), fs = R(1.5, 3.0), fp = R(0, 6.28),
-				z = zF(t) + R(0.0, 0.12),
-				order = 0.9 * t + 0.1,
-				segs = mkSegs(role, R(0.0, 0.2), t, 0.05),
-				shaft = Q.shaft and mkShaft(role, t) or nil,
-			}
-			items[#items + 1] = it
-			table.insert(special.sparks, it.segs[NS])
-		end
-		-- пух: маленькі напівпрозорі пір'їнки біля руки
-		for j = 1, Q.down do
-			local u = R(0.0, 0.7)
-			local b, bt = onArm(u)
-			local v = ARM[b]
-			items[#items + 1] = {
-				kind = "down", s = s, b = b,
-				rel = Vector3.new(s * v.X * bt, v.Y * bt, 0),
-				t = u, ang = R(-110, 35), len = R(0.28, 0.5), w = R(0.14, 0.22), th = 0.11,
-				fa = R(0.04, 0.10), fs = R(1.4, 3.0), fp = R(0, 6.28),
-				z = zArc(u) + R(0.12, 0.30),
-				order = 0.9 * u + 0.2,
-				body = mk("ball", 3, R(0.0, 0.1), 0.45 + 0.3 * R(0, 1), u, 0.35),
-			}
-		end
-		-- товстий гребінь по передньому краю (найвища точка крила)
-		for i = 1, Q.ridge do
-			local u = (i - 1) / (Q.ridge - 1)
-			local b, bt = onArm(u)
-			local v = ARM[b]
-			items[#items + 1] = {
-				kind = "ridge", s = s, b = b,
-				rel = Vector3.new(s * v.X * bt, v.Y * bt, 0),
-				u = u, order = 0.9 * u,
-				len = 0.55, wd = 0.30 - 0.12 * u, th = 0.28 - 0.12 * u,
-				z = zArc(u) + 0.24,
-				body = mk("ball", 4, 0.02 * (i % 2), 0, u * 0.8),
-			}
-		end
-	end
-
-	-- стан анімації (плавно наближається до цілі)
-	local spread, ampS, ampL, liftB, sweepB = 1, 0.03, 0.03, 0.0, math.rad(12)
-	local ph = 0
-	local latS, kick, wasAir = 0, 0, false
-	local prevA0, wv = 0, 0
-
-	local anim = function(c)
-		local dt = c.dt or 0.016
-		local sz = c.sz
-		local ch = c.ch
-		local k = math.min(1, dt * 4)
-		local run = math.clamp((c.run or 0) / 24, 0, 1)
-		local vy = c.vy or 0
-
-		-- приземлення: невеликий відскок і тріпотіння
-		if wasAir and not c.air then kick = 1 end
-		wasAir = c.air
-		kick = kick * math.exp(-dt * 3.2)
-
-		-- інерція від бігу вбік (згладжена)
-		local lat = math.clamp((c.lvx or 0) / 30, -1, 1)
-		latS += (lat - latS) * math.min(1, dt * 3)
-
-		local spT, ampST, ampLT, liftT, swT, spd
-		if c.fall then
-			-- швидке падіння: крила складаються вгору
-			spT, ampST, ampLT, liftT, swT, spd = 0.35, 0.04, 0.06, 0.45, math.rad(25), 2
-		elseif c.air and vy < -2 then
-			-- ширяння: крила широко розправлені, повільні помахи
-			spT, ampST, ampLT, liftT, swT, spd = 1.0, 0.06, 0.10, 0.12, math.rad(8), 2.5
-		elseif c.air then
-			-- зліт / утримання в повітрі: сильні помахи
-			local rise = vy > 4
-			spT, ampST, ampLT, liftT, swT, spd = 1.0, rise and 0.30 or 0.25, rise and 0.50 or 0.42, -0.10, math.rad(10), rise and 9 or 8
-		else
-			-- на землі: дихання, на бігу трохи назад
-			spT, ampST, ampLT, liftT, swT, spd = 1.0, 0.03, 0.03, 0.03 * run, math.rad(12 + 6 * run), 1.2 + 1.5 * run
-		end
-		ampLT += 0.25 * kick
-		liftT += 0.4 * kick
-		spd += 5 * kick
-
-		spread += (spT - spread) * k
-		ampS += (ampST - ampS) * k
-		ampL += (ampLT - ampL) * k
-		liftB += (liftT - liftB) * k
-		sweepB += (swT - sweepB) * k
-		ph += dt * spd * (Wings.speed / 5)
-		c.flapAmt = ampL
-
-		local a0 = liftB + 0.03 * math.sin(c.clk * 1.4) + ampL * flapWave(ph - 0.3)
-		local fold = 1 - spread
-
-		-- кутова швидкість крила: пір'я відстає у протилежний бік (інерція)
-		local wvRaw = (a0 - prevA0) / math.max(dt, 1e-3)
-		prevA0 = a0
-		wv += (math.clamp(wvRaw, -40, 40) - wv) * math.min(1, dt * 12)
-		local dragBase = -math.clamp(wv * 0.035, -0.5, 0.5)
-
-		-- кістки: шарнір -> 3 суглоби руки (з відставанням, як у справжнього крила)
-		local Fb = {}
-		for _, s in ipairs(SIDES) do
-			local sw = math.max(sweepB + ampS * flapWave(ph) - s * latS * 0.12, -0.2)
-			local U = { hingeCF(s, sw) * CFrame.Angles(0, 0, s * a0) }
-			for kk = 1, #ARM do
-				local v = ARM[kk]
-				local ang = -fold * 0.35 + ampL * 0.45 * flapWave(ph - 0.7 * kk) + 0.02 * math.sin(c.clk * 1.1 + kk)
-				U[kk + 1] = U[kk] * CFrame.new(s * v.X * sz, v.Y * sz, 0) * CFrame.Angles(0, 0, s * ang)
-			end
-			Fb[s] = U
-		end
-
-		-- пір'я розкривається віялом на помаху; вітер (біг / повітря) тріпоче ним сильніше
-		local sk = (0.5 + 0.5 * spread) * (1 + 0.08 * math.clamp(ampL / 0.42, 0, 1.3) * math.sin(ph - 0.2))
-		local fl = 1 + 1.2 * run + (c.air and 0.8 or 0)
-
-		for _, f in ipairs(items) do
-			local grow = smooth(c.op * 1.6 - f.order * 0.6)
-			local gm = 0.04 + 0.96 * grow
-			local S = c.size * gm
-			local U = Fb[f.s]
-			local Ff = U[f.b] * CFrame.new(f.rel * sz)
-			local z = Vector3.new(0, 0, f.z * S)
-
-			if f.kind == "ridge" then
-				local v = ARM[f.b]
-				local dirn = Vector3.new(f.s * v.X, v.Y, 0).Unit
-				local vx = WN:Cross(dirn)
-				place(f.body, Ff * CFrame.fromMatrix(z, vx, WN), Vector3.new(f.wd * S, f.th * S, f.len * S))
-			elseif f.kind == "down" then
-				-- пух: легко гойдається від вітру та помахів
-				local aa = math.rad(f.ang) + dragBase * 0.5
-					+ f.fa * math.sin(c.clk * f.fs * (0.7 + 0.6 * fl) + f.fp) * (0.6 + 0.5 * fl)
-				local d = Vector3.new(f.s * math.cos(aa), math.sin(aa), 0)
-				local vx = WN:Cross(d)
-				local ln = f.len * S
-				place(f.body, Ff * CFrame.fromMatrix(d * (ln / 2) + z, vx, WN), Vector3.new(f.w * S, f.th * S, ln))
-			else
-				-- розмір розкиданих пір'їн залежить від Chaos (при 0 їх майже не видно)
-				local Sx = S
-				if f.kind == "stray" then Sx = S * math.clamp(ch * 1.0, 0.03, 1.0) end
-
-				local a = math.rad(PIV + (f.ang + f.ja * ch - PIV) * sk)
-				-- тріпотіння: дві гармоніки, щоб рух не виглядав механічним
-				local t1 = c.clk * f.fs * (0.7 + 0.6 * fl) + f.fp
-				a += f.fa * (math.sin(t1) + 0.4 * math.sin(t1 * 2.3 + f.fp * 1.7)) * (0.3 + ch * 0.6) * fl
-				if f.t > 0.5 then -- кінці "хльостають" при помахах
-					a += 0.10 * ampL * flapWave(ph - 1.0 - f.t * 2.0 + f.fp * 0.2) * (f.t - 0.5) * 2
-				end
-				a += dragBase * (0.4 + 0.9 * f.t) -- інерція: кінчики відстають сильніше
-				-- пружинне запізнення (вторинна анімація): кінчики реагують повільніше за основу
-				local lr = math.min(1, dt * (16 - 9 * f.t))
-				if f.sa == nil or c.op < 0.3 then f.sa = a else f.sa += (a - f.sa) * lr end
-				a = f.sa
-
-				local tl = tiltOf(f.t) + f.jt * ch
-				local wMul = 1 + (f.jw - 1) * ch
-				local lMul = 1 + (f.jl - 1) * ch
-
-				if f.kind == "cov" then
-					local d = Vector3.new(f.s * math.cos(a), math.sin(a), 0)
-					local vx = WN:Cross(d)
-					local ca, sa = math.cos(tl), math.sin(tl)
-					local dtl = d * ca + WN * sa
-					local nt = WN * ca - d * sa
-					local ln = math.max(f.ln * lMul * Sx, 0.05)
-					place(
-						f.body,
-						Ff * CFrame.fromMatrix(dtl * (f.off * S + ln / 2) + z, vx, nt),
-						Vector3.new(f.w * wMul * Sx, f.th * S, ln)
-					)
-				else
-					-- довга пір'їна: вигнутий ланцюжок сегментів зі стрижнем і скрученням
-					local L = math.max(f.len * lMul * Sx, 0.05)
-					local w, th = f.w * wMul * Sx, f.th * S
-					local curl = 0.10 + 0.10 * f.t + (f.jc or 0) * ch
-					curl += 0.25 * ampL * flapWave(ph - 0.9 - f.t * 2.0 + f.fp * 0.2) -- кінчик відстає на помаху
-					curl -= math.clamp(wv * 0.02, -0.25, 0.25) * f.t
-					if f.sc == nil or c.op < 0.3 then f.sc = curl else f.sc += (curl - f.sc) * lr end
-					curl = f.sc
-					-- скручування: опахало повертається вздовж довжини, на помаху - сильніше
-					local twist = (f.tw or 0) * (0.5 + ch) + 0.35 * ampL * flapWave(ph - 0.8 - f.t * 2.0)
-
-					local pos = z
-					local ai = a
-					local lastD, lastLen = nil, 0
-					for i = 1, NS do
-						local dd = Vector3.new(f.s * math.cos(ai), math.sin(ai), 0)
-						local vxi = WN:Cross(dd)
-						local tli = tl * (0.45 + 0.28 * (i - 1))
-						local cai, sai = math.cos(tli), math.sin(tli)
-						local dti = dd * cai + WN * sai
-						local nti = WN * cai - dd * sai
-						-- скручування навколо осі пір'їни
-						local rl = (i - 1) * twist
-						local cr, sr = math.cos(rl), math.sin(rl)
-						local ux = vxi * cr + nti * sr
-						local uy = nti * cr - vxi * sr
-						local len = SG.len[i] * L
-						local ww = w * SG.wid[i]
-						local tt = th * SG.thk[i]
-						local mid = pos + dti * (len / 2)
-						-- асиметрія опахала: ширша частина зміщена до заднього краю
-						local side = -f.s * ww * 0.12
-						place(
-							f.segs[i],
-							Ff * CFrame.fromMatrix(mid + ux * side, ux, uy),
-							Vector3.new(ww, tt, len * 1.3)
-						)
-						if f.shaft then
-							place(
-								f.shaft[i],
-								Ff * CFrame.fromMatrix(mid + uy * (tt * 0.5), ux, uy),
-								Vector3.new(0.04 * c.size, 0.035 * c.size, len * 1.15)
-							)
-						end
-						lastD, lastLen = dti, len
-						pos = pos + dti * len
-						ai = ai + curl
-					end
-
-					-- розщеплені "пальці" на кінчику
-					if f.fringe and lastD then
-						local la = ai - curl
-						for j = 1, 2 do
-							local da = la + ((j == 1) and 1 or -1) * (0.15 + 0.10 * f.t)
-							local dd = Vector3.new(f.s * math.cos(da), math.sin(da), 0)
-							local vxi = WN:Cross(dd)
-							local cai, sai = math.cos(tl * 1.2), math.sin(tl * 1.2)
-							local dti = dd * cai + WN * sai
-							local nti = WN * cai - dd * sai
-							local flen = L * 0.24
-							place(
-								f.fringe[j],
-								Ff * CFrame.fromMatrix(pos - lastD * (lastLen * 0.35) + dti * (flen / 2), vxi, nti),
-								Vector3.new(w * 0.24, th * 0.5, flen * 1.3)
-							)
-						end
-					end
-				end
-			end
-		end
-	end
-
-	return anim, special
-end
-
--- ---------- ефекти: сліди за кінчиками й іскри
-local function buildFx(special, Q)
-	local fx = { trails = {}, emit = {} }
-	for _, rec in ipairs(special.tips) do
-		local p = rec.part
+	local function makeTrail(part)
+		local pal = PALETTES[state.paletteIdx]
 		local a0 = Instance.new("Attachment")
-		a0.Position = Vector3.new(0.22, 0, 0)
-		a0.Parent = p
+		a0.Position = Vector3.new(-part.Size.X * 0.5, 0, -part.Size.Z * 0.5)
+		a0.Parent = part
 		local a1 = Instance.new("Attachment")
-		a1.Position = Vector3.new(-0.22, 0, 0)
-		a1.Parent = p
+		a1.Position = Vector3.new(part.Size.X * 0.5, 0, -part.Size.Z * 0.5)
+		a1.Parent = part
 		local tr = Instance.new("Trail")
-		tr.Attachment0, tr.Attachment1 = a0, a1
-		tr.Lifetime = 0.55
+		tr.Attachment0 = a0
+		tr.Attachment1 = a1
+		tr.Lifetime = 0.7
 		tr.MinLength = 0.05
+		tr.LightEmission = 0.8
 		tr.FaceCamera = true
-		tr.LightEmission = 1
-		tr.LightInfluence = 0
 		tr.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.25),
+			NumberSequenceKeypoint.new(0, 0.35),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		tr.WidthScale = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(1, 0),
+			NumberSequenceKeypoint.new(1, 0.2),
 		})
-		tr.Enabled = Wings.trail
-		tr.Parent = p
-		table.insert(fx.trails, tr)
+		tr.Color = ColorSequence.new(pal.tip, pal.covert)
+		tr.Enabled = state.trails
+		tr.Parent = part
+		trails[#trails + 1] = tr
 	end
-	for i, rec in ipairs(special.sparks) do
-		if i > Q.sparks then break end
-		local e = Instance.new("ParticleEmitter")
-		e.Rate = 2
-		e.Lifetime = NumberRange.new(0.8, 1.6)
-		e.Speed = NumberRange.new(0.3, 1.2)
-		e.SpreadAngle = Vector2.new(180, 180)
-		e.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.18),
-			NumberSequenceKeypoint.new(1, 0),
-		})
-		e.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.1),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		e.LightEmission = 1
-		e.LightInfluence = 0
-		e.Drag = 1
-		e.Acceleration = Vector3.new(0, 0.6, 0)
-		e.Rotation = NumberRange.new(0, 360)
-		e.RotSpeed = NumberRange.new(-60, 60)
-		e.Enabled = Wings.sparks
-		e.Parent = rec.part
-		table.insert(fx.emit, e)
+
+	local function makeLight(parent, S)
+		local pal = PALETTES[state.paletteIdx]
+		local l = Instance.new("PointLight")
+		l.Color = pal.tip
+		l.Brightness = 1.2
+		l.Range = 9 * S
+		l.Shadows = false
+		l.Enabled = state.aura
+		l.Parent = parent
+		lights[#lights + 1] = l
 	end
-	Wings.fx = fx
-end
 
--- ---------- побудова крил
-local function wingsBuild()
-	wingsClear()
-	local char = lp.Character
-	if not char then return end
-	local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-	if not torso then return end
-	local folder = Instance.new("Folder")
-	folder.Name = "AuroraWings"
-	folder.Parent = char
+	-- side: 1 = праве крило, -1 = ліве
+	local function buildWing(side)
+		local S = SCALES[state.scaleIdx].v
+		local function mir(v) return Vector3.new(v.X * side, v.Y, v.Z) end
 
-	local function mk(kind, role, shade, tint, pos, alpha)
+		local attach = Vector3.new(0.5 * side, torso.Name == "UpperTorso" and 0.4 or 0.5, 0.55)
+
+		local function newBone()
+			local b = newPart(Vector3.new(0.2, 0.2, 0.2), Color3.new(1, 1, 1), wingsFolder)
+			b.Transparency = 1
+			return b
+		end
+
+		local shoulder, elbow, wrist = newBone(), newBone(), newBone()
+		local elbowRel = mir(P.E - P.S) * S
+		local wristRel = mir(P.W - P.E) * S
+
+		local sW = weld(torso, shoulder, CFrame.new(attach))
+		local eW = weld(shoulder, elbow, CFrame.new(elbowRel))
+		local wW = weld(elbow, wrist, CFrame.new(wristRel))
+		makeLight(elbow, S)
+		makeLight(wrist, S)
+
+		wingList[#wingList + 1] = {
+			side = side, attach = attach,
+			sW = sW, eW = eW, wW = wW,
+			elbowRel = elbowRel, wristRel = wristRel,
+		}
+
+		local function feather(bone, origin, p, ang, len, width, z, kind, frac, withRachis, withRipple)
+			local a = math.rad(ang)
+			local rel = p - origin
+			local pos = Vector3.new(rel.X * side, rel.Y, z) * S
+			local dir = Vector3.new(math.cos(a) * side, math.sin(a), 0)
+			local base = CFrame.lookAt(pos, pos + dir, Vector3.new(0, 0, 1))
+
+			len, width = len * S, width * S
+			local shift = CFrame.new(0, 0, -len * 0.5)
+
+			local part = newPart(Vector3.new(width, CFG.Thick * S, len), colorFor(kind, frac), wingsFolder)
+			local mesh = Instance.new("SpecialMesh")
+			mesh.MeshType = Enum.MeshType.Sphere
+			mesh.Parent = part
+			local w1 = weld(bone, part, base * shift)
+			recolor[#recolor + 1] = { part = part, kind = kind, frac = frac }
+
+			local w2
+			if withRachis then
+				local r = newPart(Vector3.new(0.04 * S, 0.09 * S, len * 0.94), colorFor("rachis", 0), wingsFolder)
+				w2 = weld(bone, r, base * shift)
+				recolor[#recolor + 1] = { part = r, kind = "rachis", frac = 0 }
+			end
+
+			if withRipple then
+				ripples[#ripples + 1] = {
+					w1 = w1, w2 = w2, base = base, shift = shift, side = side,
+					phase = p.X * 0.4 + p.Y * 0.3,
+					amp = math.rad(2 + 5 * frac),
+				}
+			end
+			return part
+		end
+
+		local function coverRows(bone, origin, p, ang, len, width, z)
+			feather(bone, origin, p, ang, len * 0.46, width * 0.92, z + 0.07, "covert", 0, false, false)
+			feather(bone, origin, p + Vector3.new(0, 0.1, 0), ang, len * 0.28, width * 0.80, z + 0.13, "covert", 0, false, false)
+		end
+
+		-- плечові (4)
+		for i = 1, 4 do
+			local t = 0.15 + (i - 1) * 0.18
+			local p = P.S:Lerp(P.E, t)
+			local ang = -108 + (i - 1) * 5
+			local len = 2.2 + (i - 1) * 0.13
+			local z = 0.02 * i
+			feather(shoulder, P.S, p, ang, len, 0.50, z, "feather", 0.02 * i, true, true)
+			coverRows(shoulder, P.S, p, ang, len, 0.50, z)
+		end
+
+		-- другорядні (9)
+		for i = 1, 9 do
+			local t = (i - 1) / 8
+			local p = P.E:Lerp(P.W, t)
+			local ang = -100 + 4 * (i - 1)
+			local len = 2.75 + 0.06 * (i - 1)
+			local z = 0.02 * i
+			local part = feather(elbow, P.E, p, ang, len, 0.52, z, "feather", 0.15 + 0.25 * t, true, true)
+			coverRows(elbow, P.E, p, ang, len, 0.52, z)
+			if i == 3 or i == 7 then makeEmitter(part, S) end
+		end
+
+		-- первостепенні (9)
+		local primLen = { 3.1, 3.4, 3.7, 3.95, 4.15, 4.25, 4.2, 3.95, 3.5 }
+		for i = 1, 9 do
+			local t = (i - 1) / 8
+			local p = P.W:Lerp(P.T, t)
+			local ang = -58 + 8.5 * (i - 1)
+			local len = primLen[i]
+			local wd = 0.52 - 0.02 * (i - 1)
+			local z = 0.18 - 0.02 * (i - 1)
+			local part = feather(wrist, P.W, p, ang, len, wd, z, "feather", 0.45 + 0.55 * t, true, true)
+			coverRows(wrist, P.W, p, ang, len, wd, z)
+			if i % 3 == 0 then makeEmitter(part, S) end
+			if i == 6 or i == 9 then makeTrail(part) end
+			if i >= 4 then tipParts[#tipParts + 1] = part end
+		end
+
+		-- алула
+		local alulaAng = { 70, 55, 40 }
+		local alulaLen = { 0.95, 0.85, 0.75 }
+		for i = 1, 3 do
+			local p = P.W + Vector3.new(0.1 + 0.05 * i, 0.1, 0)
+			feather(wrist, P.W, p, alulaAng[i], alulaLen[i], 0.20, 0.30, "covert", 0, false, false)
+		end
+
+		-- передній край
+		for j = 1, 5 do
+			local p = P.S:Lerp(P.E, (j - 0.5) / 5)
+			feather(shoulder, P.S, p, -85, 1.0, 0.34, 0.26, "covert", 0, false, false)
+		end
+		for j = 1, 6 do
+			local p = P.E:Lerp(P.W, (j - 0.5) / 6)
+			feather(elbow, P.E, p, -78, 0.95, 0.32, 0.26, "covert", 0, false, false)
+		end
+		for j = 1, 5 do
+			local p = P.W:Lerp(P.T, (j - 0.5) / 5)
+			feather(wrist, P.W, p, -40 + 10 * (j - 1), 1.1, 0.30, 0.26, "covert", 0, false, false)
+		end
+	end
+
+	local function applyColors()
+		for _, e in ipairs(recolor) do e.part.Color = colorFor(e.kind, e.frac) end
+		local pal = PALETTES[state.paletteIdx]
+		for _, em in ipairs(emitters) do em.Color = ColorSequence.new(pal.covert, pal.rachis) end
+		for _, tr in ipairs(trails) do tr.Color = ColorSequence.new(pal.tip, pal.covert) end
+		for _, l in ipairs(lights) do l.Color = pal.tip end
+		for _, hp in ipairs(haloParts) do hp.Color = pal.rachis end
+	end
+
+	local function applyGlow()
+		local m = state.glow and Enum.Material.Neon or CFG.Material
+		for _, e in ipairs(recolor) do e.part.Material = m end
+	end
+
+	local function applySparkles()
+		for _, em in ipairs(emitters) do em.Enabled = state.sparkles end
+	end
+
+	local function buildHalo()
+		local head = char and char:FindFirstChild("Head")
+		if not head then return end
+		local pal = PALETTES[state.paletteIdx]
+
+		haloFolder = Instance.new("Folder")
+		haloFolder.Name = "AngelHalo"
+
+		local root = Instance.new("Part")
+		root.Size = Vector3.new(0.2, 0.2, 0.2)
+		root.Transparency = 1
+		root.Anchored = false
+		root.CanCollide = false
+		root.CanTouch = false
+		root.CanQuery = false
+		root.Massless = true
+		root.CastShadow = false
+		root.CFrame = head.CFrame
+		root.Parent = haloFolder
+
+		haloBase = CFrame.new(0, head.Size.Y * 0.5 + 0.75, 0)
+		haloWeld = weld(head, root, haloBase)
+
+		local N, R = 24, CFG.HaloRadius
+		local segLen = 2 * math.pi * R / N * 1.15
+		for i = 1, N do
+			local a = (i - 1) / N * math.pi * 2
+			local seg = Instance.new("Part")
+			seg.Size = Vector3.new(segLen, 0.1, 0.1)
+			seg.Color = pal.rachis
+			seg.Material = Enum.Material.Neon
+			seg.Anchored = false
+			seg.CanCollide = false
+			seg.CanTouch = false
+			seg.CanQuery = false
+			seg.Massless = true
+			seg.CastShadow = false
+			seg.CFrame = head.CFrame
+			seg.Parent = haloFolder
+			weld(root, seg, CFrame.Angles(0, a, 0) * CFrame.new(0, 0, R))
+			haloParts[#haloParts + 1] = seg
+		end
+
+		local l = Instance.new("PointLight")
+		l.Color = pal.rachis
+		l.Brightness = 1.5
+		l.Range = 8
+		l.Shadows = false
+		l.Enabled = state.aura
+		l.Parent = root
+		lights[#lights + 1] = l
+	end
+
+	local function applyFx()
+		for _, tr in ipairs(trails) do tr.Enabled = state.trails end
+		for _, l in ipairs(lights) do l.Enabled = state.aura end
+		if haloFolder then haloFolder.Parent = (state.halo and char) or nil end
+	end
+
+	local function buildAll()
+		if not (char and torso and torso.Parent) then return end
+		if wingsFolder then wingsFolder:Destroy() end
+		if haloFolder then haloFolder:Destroy() end
+		recolor, ripples, wingList, emitters = {}, {}, {}, {}
+		trails, lights, tipParts, haloParts = {}, {}, {}, {}
+		haloWeld, haloBase = nil, nil
+
+		wingsFolder = Instance.new("Folder")
+		wingsFolder.Name = "AngelWings"
+		buildWing(1)
+		buildWing(-1)
+		wingsFolder.Parent = state.wings and char or nil
+		buildHalo()
+		applyFx()
+	end
+
+	local function ensureBuilt()
+		if not wingsFolder then buildAll() end
+	end
+
+	-- анімація крил
+	local t = 0
+	local curSpeed, curAmp = CFG.SpeedIdle, CFG.AmpIdle
+	local foldA, rippleK = 0, 1
+	local lastCycle = 0
+
+	bind(RunService.RenderStepped, function(dt)
+		if dead or not state.wings or not wingsFolder or not wingsFolder.Parent then return end
+		if not humanoid or not humanoid.Parent or not rootPart then return end
+
+		local vel = rootPart.AssemblyLinearVelocity
+		local horiz = Vector3.new(vel.X, 0, vel.Z).Magnitude
+		local tSpeed, tAmp
+		if humanoid.FloorMaterial == Enum.Material.Air then
+			tSpeed, tAmp = CFG.SpeedAir, CFG.AmpAir
+		elseif horiz > 2 then
+			tSpeed, tAmp = CFG.SpeedWalk, CFG.AmpWalk
+		else
+			tSpeed, tAmp = CFG.SpeedIdle, CFG.AmpIdle
+		end
+		if not state.anim then tAmp = 0 end
+
+		local k = math.min(dt * 4, 1)
+		curSpeed += (tSpeed - curSpeed) * k
+		curAmp += (tAmp - curAmp) * k
+		foldA += ((state.fold and 1 or 0) - foldA) * math.min(dt * 3, 1)
+		rippleK += ((state.anim and 1 or 0) - rippleK) * k
+		t += dt * curSpeed
+
+		local cycle = math.floor((t + math.pi * 0.5) / (math.pi * 2))
+		if cycle ~= lastCycle then
+			lastCycle = cycle
+			if state.sparkles and curAmp > 15 then
+				for _, em in ipairs(emitters) do em:Emit(4) end
+			end
+		end
+
+		local amp = math.rad(curAmp)
+		local sh = math.sin(t)
+		local el = math.sin(t - 0.7)
+		local wr = math.sin(t - 1.4)
+
+		local yaw = math.rad(CFG.YawSpread + (CFG.YawFold - CFG.YawSpread) * foldA)
+		local shRot = math.rad(CFG.RollFold) * foldA + sh * amp
+		local elRot = math.rad(CFG.ElbowFold) * foldA + (el - sh) * amp * 0.5
+		local wrRot = math.rad(CFG.WristFold) * foldA + (wr - el) * amp * 0.6
+
+		for _, w in ipairs(wingList) do
+			local s = w.side
+			w.sW.C0 = CFrame.new(w.attach) * CFrame.Angles(0, -yaw * s, 0) * CFrame.Angles(0, 0, shRot * s)
+			w.eW.C0 = CFrame.new(w.elbowRel) * CFrame.Angles(0, 0, elRot * s)
+			w.wW.C0 = CFrame.new(w.wristRel) * CFrame.Angles(0, 0, wrRot * s)
+		end
+
+		for _, f in ipairs(ripples) do
+			local rip = math.sin(t - f.phase) * f.amp * rippleK * f.side
+			local c0 = f.base * CFrame.Angles(0, rip, 0) * f.shift
+			f.w1.C0 = c0
+			if f.w2 then f.w2.C0 = c0 end
+		end
+	end)
+
+	-- падаючі пір'я + нимб
+	local function spawnFeather()
+		local src = tipParts[math.random(#tipParts)]
+		if not src or not src.Parent then return end
+		local S = SCALES[state.scaleIdx].v
+
 		local p = Instance.new("Part")
-		p.Size = Vector3.new(0.2, 0.2, 0.2)
-		p.Transparency = alpha or 0
-		p.Massless = true
+		p.Anchored = true
 		p.CanCollide = false
 		p.CanTouch = false
 		p.CanQuery = false
 		p.CastShadow = false
-		p.Material = Wings.neon and Enum.Material.Neon or Enum.Material.SmoothPlastic
-		p.TopSurface = Enum.SurfaceType.Smooth
-		p.BottomSurface = Enum.SurfaceType.Smooth
-		if kind == "ball" then
-			local m = Instance.new("SpecialMesh")
-			m.MeshType = Enum.MeshType.Sphere
-			m.Parent = p
+		p.Size = Vector3.new(0.2 * S, 0.03, 0.75 * S)
+		p.Color = src.Color
+		p.Material = state.glow and Enum.Material.Neon or CFG.Material
+		local m = Instance.new("SpecialMesh")
+		m.MeshType = Enum.MeshType.Sphere
+		m.Parent = p
+
+		local pos = src.Position + Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * 0.6 * S
+		p.CFrame = CFrame.new(pos)
+		p.Parent = fxFolder
+
+		falling[#falling + 1] = {
+			part = p, pos = pos, age = 0,
+			life = 2.5 + math.random() * 1.5,
+			vel = Vector3.new((math.random() - 0.5) * 0.8, -(0.9 + math.random() * 0.7), (math.random() - 0.5) * 0.8),
+			ph = math.random() * 6.28, freq = 1.5 + math.random() * 1.5,
+			sway = 1.2, spin = 1 + math.random() * 2,
+			rot = CFrame.Angles(0, math.random() * 6.28, 0),
+		}
+	end
+
+	local feTimer = 0
+	bind(RunService.RenderStepped, function(dt)
+		if dead then return end
+		if haloWeld and haloWeld.Parent and haloBase then
+			local c = os.clock()
+			haloWeld.C0 = haloBase
+				* CFrame.new(0, math.sin(c * 1.6) * 0.06, 0)
+				* CFrame.Angles(math.sin(c * 0.9) * 0.05, c * 0.8, math.sin(c * 1.1) * 0.05)
 		end
-		local w = Instance.new("Weld")
-		w.Part0 = torso
-		w.Part1 = p
-		w.Parent = p
-		p.Parent = folder
-		local r = { part = p, weld = w, role = role, shade = shade or 0, tint = tint or 0, pos = pos or 0 }
-		table.insert(Wings.recs, r)
-		return r
-	end
 
-	-- невидима точка зі світлом за спиною (підсвічує навколишні об'єкти)
-	local glow = Instance.new("Part")
-	glow.Size = Vector3.new(0.4, 0.4, 0.4)
-	glow.Transparency = 1
-	glow.Massless = true
-	glow.CanCollide = false
-	glow.CanTouch = false
-	glow.CanQuery = false
-	glow.CastShadow = false
-	local gw = Instance.new("Weld")
-	gw.Part0 = torso
-	gw.Part1 = glow
-	gw.C0 = CFrame.new(0, 0.8, 0.9)
-	gw.Parent = glow
-	glow.Parent = folder
-	local pl = Instance.new("PointLight")
-	pl.Range = 16
-	pl.Brightness = 1.6
-	pl.Shadows = false
-	pl.Enabled = Wings.neon
-	pl.Parent = glow
-
-	Wings.folder, Wings.torso, Wings.light = folder, torso, pl
-	local Q = QUALITY[Wings.quality] or QUALITY.High
-	local anim, special = buildWing(mk, Q)
-	Wings.anim = anim
-	buildFx(special, Q)
-	Wings.open = 0 -- крила розгортаються з нуля
-	wingsPaint(wClock)
-	for _, e in ipairs(Wings.fx.emit) do e:Emit(6) end -- спалах іскор при появі
-end
-
-local function setWings(on)
-	Wings.enabled = on
-	if on and not Wings.folder then wingsBuild() end
-	updateBloom()
-end
-
-local function setNeon(on)
-	Wings.neon = on
-	local m = on and Enum.Material.Neon or Enum.Material.SmoothPlastic
-	for _, r in ipairs(Wings.recs) do
-		r.part.Material = m
-	end
-	if Wings.light then Wings.light.Enabled = on end
-end
-
-local function setTrail(on)
-	Wings.trail = on
-	for _, t in ipairs(Wings.fx.trails) do t.Enabled = on end
-end
-
-local function setSparks(on)
-	Wings.sparks = on
-	for _, e in ipairs(Wings.fx.emit) do e.Enabled = on end
-end
-
-local function setShimmer(on)
-	Wings.shimmer = on
-	wingsPaint(wClock) -- повернути базові кольори, якщо вимкнули
-end
-
--- ---------- HALO: кільця-вихри над головою
--- r - радіус, y - висота над центром голови, w - швидкість (знак = напрям), tilt - нахил кільця,
--- n - кількість сегментів, arc - довжина дуги в радіанах (хвіст тягнеться за "головою" вихору)
-local HALO_RINGS = {
-	{ r = 1.9, y = 2.2, w = 1.7, tilt = 0.22, n = 26, arc = 1.7 },
-	{ r = 2.3, y = 2.5, w = -1.2, tilt = -0.18, n = 30, arc = 1.5 },
-	{ r = 1.5, y = 1.9, w = 2.3, tilt = 0.12, n = 22, arc = 1.3 },
-}
-
-local function haloBuild()
-	haloClear()
-	local char = lp.Character
-	local head = char and char:FindFirstChild("Head")
-	if not head then return end
-	local folder = Instance.new("Folder")
-	folder.Name = "AuroraHalo"
-	folder.Parent = char
-	for ri, ring in ipairs(HALO_RINGS) do
-		for i = 1, ring.n do
-			local u = i / ring.n -- 0 = кінець хвоста ... 1 = голова вихору
-			local th = 0.05 + 0.13 * u
-			local p = Instance.new("Part")
-			p.Size = Vector3.new(th, th, ring.r * ring.arc / ring.n * 1.7)
-			p.Massless = true
-			p.CanCollide = false
-			p.CanTouch = false
-			p.CanQuery = false
-			p.CastShadow = false
-			p.Material = Enum.Material.Neon
-			p.Transparency = 0.6 * (1 - u)
-			local m = Instance.new("SpecialMesh")
-			m.MeshType = Enum.MeshType.Sphere
-			m.Parent = p
-			local w = Instance.new("Weld")
-			w.Part0 = head
-			w.Part1 = p
-			w.Parent = p
-			p.Parent = folder
-			table.insert(Halo.recs, { part = p, weld = w, ring = ring, ri = ri, u = u })
+		feTimer -= dt
+		if feTimer <= 0 then
+			feTimer = CFG.FeatherDrop * (curAmp > 15 and 0.35 or 1) * (0.7 + math.random() * 0.6)
+			if state.feathers and state.wings and wingsFolder and wingsFolder.Parent
+				and #tipParts > 0 and #falling < 40 then
+				spawnFeather()
+			end
 		end
-	end
-	Halo.folder, Halo.head = folder, head
-	Halo.open = 0
-	haloPaint(Halo.t)
-end
 
-local function haloUpdate(dt)
-	local head = Halo.head
-	if not head or not head.Parent then
-		haloClear()
-		return
-	end
-	Halo.open += ((Halo.enabled and 1 or 0) - Halo.open) * math.min(1, dt * 3)
-	if not Halo.enabled and Halo.open < 0.03 then
-		haloClear()
-		return
-	end
-	Halo.t += dt * Halo.speed / 5
-	local t, op = Halo.t, smooth(Halo.open)
-	for _, h in ipairs(Halo.recs) do
-		local ring = h.ring
-		local sgn = ring.w > 0 and 1 or -1
-		local th = ring.w * t + (h.u - 1) * ring.arc * sgn
-		local R = ring.r * (0.5 + 0.5 * op)
-		local cs, sn = math.cos(th), math.sin(th)
-		local pos = Vector3.new(R * cs, 0.12 * math.sin(th * 3 + t * 2 + h.ri), R * sn)
-		local dir = Vector3.new(-sn, 0, cs) * sgn
-		local base = CFrame.new(0, ring.y + 0.1 * math.sin(t * 1.3 + h.ri), 0)
-			* CFrame.Angles(ring.tilt, 0, ring.tilt * 0.7)
-		h.weld.C0 = base * CFrame.lookAt(pos, pos + dir)
-	end
-	if Wings.scheme == "Accent" or Wings.scheme == "Rainbow" then
-		haloPaint(Halo.t)
-	end
-end
-
-local function setHalo(on)
-	Halo.enabled = on
-	if on and not Halo.folder then haloBuild() end
-	updateBloom()
-end
-
-bind(lp.CharacterAdded, function(char)
-	if not (Wings.enabled or Halo.enabled) then return end
-	char:WaitForChild("Humanoid", 5)
-	task.wait(0.5)
-	if lp.Character ~= char then return end
-	if Wings.enabled then wingsBuild() end
-	if Halo.enabled then haloBuild() end
-end)
-
-local CTX = {}
-local paintT = 0
-bind(RunService.RenderStepped, function(dt)
-	if Halo.folder then haloUpdate(dt) end
-	if not Wings.folder then return end
-	local torso = Wings.torso
-	if not torso or not torso.Parent then
-		wingsClear()
-		return
-	end
-	-- плавне розгортання / згортання
-	Wings.open += ((Wings.enabled and 1 or 0) - Wings.open) * math.min(1, dt * 3.5)
-	if not Wings.enabled and Wings.open < 0.03 then
-		wingsClear()
-		return
-	end
-	wClock += dt
-
-	-- стан персонажа для анімації
-	local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-	local air = hum ~= nil and hum.FloorMaterial == Enum.Material.Air
-	local vel = torso.AssemblyLinearVelocity
-	local lv = torso.CFrame:VectorToObjectSpace(vel)
-	CTX.dt = dt
-	CTX.air = air
-	CTX.fall = air and vel.Y < -14
-	CTX.run = Vector3.new(vel.X, 0, vel.Z).Magnitude
-	CTX.vy = vel.Y
-	CTX.lvx = lv.X
-	CTX.sz = Wings.size * (0.04 + 0.96 * smooth(Wings.open))
-	CTX.size = Wings.size
-	CTX.op = Wings.open
-	CTX.clk = wClock
-	CTX.ch = Wings.chaos / 100
-	Wings.anim(CTX)
-
-	-- світло й іскри живуть разом з помахами
-	local flap = CTX.flapAmt or 0
-	if Wings.light then Wings.light.Brightness = 1.3 + 3 * flap end
-	for _, e in ipairs(Wings.fx.emit) do e.Rate = 1.5 + 12 * flap end
-
-	-- shimmer / Rainbow / Accent: перефарбування ~25 разів на секунду
-	paintT += dt
-	if paintT > 0.04 and (Wings.shimmer or Wings.scheme == "Accent" or Wings.scheme == "Rainbow") then
-		paintT = 0
-		wingsPaint(wClock)
-	end
-end)
-
----------------------------------------------------------------- ВКЛАДКИ (вміст)
-local statsLabel
-local fps = 60
-local isOpen = true
-local setOpen -- визначається нижче
-
-local function buildMain(pane)
-	local row = card(pane, 84)
-	local av = Instance.new("ImageLabel")
-	av.Size = UDim2.fromOffset(60, 60)
-	av.Position = UDim2.fromOffset(12, 12)
-	av.BackgroundColor3 = C.off
-	av.Parent = row
-	corner(av, 30)
-	task.spawn(function()
-		local ok, img = pcall(function()
-			return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-		end)
-		if ok and av.Parent then av.Image = img end
-	end)
-	label(row, lp.DisplayName, 18, C.text, UDim2.fromOffset(84, 10), UDim2.new(1, -96, 0, 22))
-	label(row, "@" .. lp.Name, 12, C.muted, UDim2.fromOffset(84, 33), UDim2.new(1, -96, 0, 16))
-	statsLabel = label(row, "FPS --  |  Ping -- ms", 12, C.on, UDim2.fromOffset(84, 55), UDim2.new(1, -96, 0, 16))
-	onAccent(function(c) statsLabel.TextColor3 = c end)
-
-	section(pane, "Quick actions")
-	button(pane, "Hide menu", "Hotkey: RightShift", "Hide", function()
-		isOpen = false
-		setOpen(false)
-	end)
-	button(pane, "Test toast", "Show a notification", "Test", function()
-		notify("Aurora is working!")
-	end)
-end
-
-local function buildCombat(pane)
-	section(pane, "Assist")
-	toggle(pane, "Aim Assist", "Helps you aim at targets", "Aim Assist", false)
-	toggle(pane, "Auto Clicker", "Clicks automatically", "Auto Clicker", false)
-	section(pane, "Values")
-	slider(pane, "Reach", "Adjust attack distance", 1, 20, 5, "Reach")
-	slider(pane, "FOV", "Aim field of view", 10, 120, 60, "FOV", nil, "°")
-	selector(pane, "Target", "Who to focus on", { "Closest", "Lowest HP", "Random" }, 1, "Target")
-end
-
-local function buildPlayer(pane)
-	section(pane, "Movement")
-	toggle(pane, "Option 1", "Опис", "P1", false)
-	toggle(pane, "Option 2", "Опис", "P2", false)
-	slider(pane, "Speed", "Walk speed multiplier", 1, 10, 1, "Speed", nil, "x")
-end
-
-local function buildFun(pane)
-	section(pane, "Wings")
-	toggle(pane, "Wings", "Visual wings (only you see them)", "Wings", false, setWings)
-	selector(pane, "Wing color", "Neon = ice glow like reference", { "Neon", "Default", "White", "Gold", "Dark", "Ice", "Fire", "Galaxy", "Accent", "Rainbow" }, 1, "WingColor", function(v)
-		Wings.scheme = v
-		wingsPaint(wClock)
-		haloPaint(wClock)
-	end)
-	selector(pane, "Quality", "Low = more FPS, High = more feathers", { "Low", "Medium", "High" }, 3, "WingQuality", function(v)
-		Wings.quality = v
-		if Wings.folder and Wings.enabled then wingsBuild() end
-	end)
-	slider(pane, "Wing size", "Make them bigger or smaller", 50, 200, 85, "WingSize", function(v)
-		Wings.size = v / 100
-	end, "%")
-	slider(pane, "Flap speed", "How fast they flap", 1, 10, 5, "WingSpeed", function(v)
-		Wings.speed = v
-	end)
-	slider(pane, "Chaos", "Uneven, ragged feathers", 0, 100, 25, "WingChaos", function(v)
-		Wings.chaos = v
-	end, "%")
-
-	section(pane, "Effects")
-	toggle(pane, "Neon", "Glowing neon material and light", "WingNeon", true, setNeon)
-	toggle(pane, "Shimmer", "A wave of light runs along the wings", "WingShimmer", true, setShimmer)
-	toggle(pane, "Trails", "Glowing trails behind the wing tips", "WingTrails", true, setTrail)
-	toggle(pane, "Sparkles", "Sparks drift off the feathers", "WingSparks", true, setSparks)
-	toggle(pane, "Bloom", "Soft glow around bright parts", "Bloom", true, function(on)
-		bloomPref = on
-		updateBloom()
-	end)
-	toggle(pane, "Halo", "Swirling rings above your head", "Halo", false, setHalo)
-	slider(pane, "Halo speed", "How fast the rings spin", 1, 10, 5, "HaloSpeed", function(v)
-		Halo.speed = v
-	end)
-end
-
-local function buildMisc(pane)
-	section(pane, "Themes")
-	local g = grid(pane)
-	local cells = {}
-	local function choose(key, id, kind, text)
-		for k, c in pairs(cells) do
-			c.Enabled = (k == key)
+		for i = #falling, 1, -1 do
+			local f = falling[i]
+			f.age += dt
+			if f.age >= f.life then
+				f.part:Destroy()
+				table.remove(falling, i)
+			else
+				local ph = f.age * f.freq + f.ph
+				f.pos += (f.vel + Vector3.new(math.sin(ph), 0, math.cos(ph)) * f.sway) * dt
+				f.part.CFrame = CFrame.new(f.pos) * f.rot
+					* CFrame.Angles(math.sin(f.age * 2 + f.ph) * 0.6, f.age * f.spin, 0)
+				f.part.Transparency = math.clamp((f.age / f.life - 0.6) / 0.4, 0, 1)
+			end
 		end
-		applyTheme(id, kind)
-		notify(id and ((kind == "video" and "Video " or "Theme ") .. text) or "No background")
-	end
-	local entries = { { "none", nil, "X" } }
-	for n, id in ipairs(THEMES) do
-		table.insert(entries, { id, id, tostring(n) })
-	end
-	for n, id in ipairs(VIDEOS) do
-		table.insert(entries, { "v" .. id, id, tostring(n), "video" })
-	end
-	for idx, e in ipairs(entries) do
-		local key, id, text, kind = e[1], e[2], e[3], e[4]
-		local cell = cellButton(g, idx)
-		local st = Instance.new("UIStroke")
-		st.Color = C.on
-		st.Thickness = 2
-		st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		st.Enabled = (key == (THEMES[1] or "none"))
-		st.Parent = cell
-		cells[key] = st
-		onAccent(function(c) st.Color = c end)
-		if id and kind ~= "video" then
-			local img = Instance.new("ImageLabel")
-			img.Size = UDim2.fromScale(1, 1)
-			img.BackgroundTransparency = 1
-			img.Image = "rbxthumb://type=Asset&id=" .. id .. "&w=420&h=420"
-			img.ScaleType = Enum.ScaleType.Crop
-			img.Parent = cell
-			corner(img, 27)
-		else
-			local mk = Instance.new("TextLabel")
-			mk.Size = UDim2.fromScale(1, 1)
-			mk.BackgroundTransparency = 1
-			mk.Text = id and ">" or "X"
-			mk.TextColor3 = C.text
-			mk.TextSize = 18
-			setFont(mk)
-			mk.Parent = cell
+	end)
+
+	-- персонаж / респавн
+	local function onCharacter(newChar)
+		local h = newChar:WaitForChild("Humanoid", 10)
+		local rp = newChar:WaitForChild("HumanoidRootPart", 10)
+		local ts = newChar:WaitForChild("UpperTorso", 5) or newChar:WaitForChild("Torso", 5)
+		if dead then return end
+		if not (h and rp and ts) then
+			warn("AngelWings: не знайдено Humanoid/HumanoidRootPart/торс")
+			return
 		end
-		cell.Activated:Connect(function()
-			choose(key, id, kind, text)
-		end)
+		char, humanoid, rootPart, torso = newChar, h, rp, ts
+		wingsFolder, haloFolder, haloWeld, haloBase = nil, nil, nil, nil
+		recolor, ripples, wingList, emitters = {}, {}, {}, {}
+		trails, lights, tipParts, haloParts = {}, {}, {}, {}
+		if state.wings or state.halo then buildAll() end
 	end
 
-	local pc
-	toggle(pane, "Color palette", "Pick any accent color", "Palette", false, function(on)
-		if pc then pc.Visible = on end
-	end)
-	pc = card(pane, 156)
-	pc.Visible = false
-	local hh, ss, vv = C.on:ToHSV()
+	bind(lp.CharacterAdded, onCharacter)
+	if lp.Character then task.spawn(onCharacter, lp.Character) end
 
-	local svBox = Instance.new("Frame")
-	svBox.Position = UDim2.fromOffset(12, 12)
-	svBox.Size = UDim2.new(1, -24, 0, 96)
-	svBox.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
-	svBox.BorderSizePixel = 0
-	svBox.ClipsDescendants = true
-	svBox.Parent = pc
-	corner(svBox, 10)
-	local white = Instance.new("Frame")
-	white.Size = UDim2.fromScale(1, 1)
-	white.BackgroundColor3 = Color3.new(1, 1, 1)
-	white.BorderSizePixel = 0
-	white.Parent = svBox
-	local wg = Instance.new("UIGradient")
-	wg.Transparency = NumberSequence.new(0, 1)
-	wg.Parent = white
-	local black = Instance.new("Frame")
-	black.Size = UDim2.fromScale(1, 1)
-	black.BackgroundColor3 = Color3.new(0, 0, 0)
-	black.BorderSizePixel = 0
-	black.Parent = svBox
-	local bg2 = Instance.new("UIGradient")
-	bg2.Rotation = 90
-	bg2.Transparency = NumberSequence.new(1, 0)
-	bg2.Parent = black
-	local cur = Instance.new("Frame")
-	cur.AnchorPoint = Vector2.new(0.5, 0.5)
-	cur.Size = UDim2.fromOffset(14, 14)
-	cur.BackgroundTransparency = 1
-	cur.ZIndex = 3
-	cur.Parent = svBox
-	corner(cur, 7)
-	local curStroke = Instance.new("UIStroke")
-	curStroke.Color = Color3.new(1, 1, 1)
-	curStroke.Thickness = 2
-	curStroke.Parent = cur
-
-	local hueBar = Instance.new("Frame")
-	hueBar.Position = UDim2.fromOffset(12, 122)
-	hueBar.Size = UDim2.new(1, -64, 0, 16)
-	hueBar.BackgroundColor3 = Color3.new(1, 1, 1)
-	hueBar.BorderSizePixel = 0
-	hueBar.Parent = pc
-	corner(hueBar, 8)
-	local hg = Instance.new("UIGradient")
-	do
-		local keys = {}
-		for i = 0, 6 do
-			table.insert(keys, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(math.min(i / 6, 0.999), 1, 1)))
+	-- API для меню
+	function AngelWings.setWings(on)
+		state.wings = on
+		if on then ensureBuilt() end
+		if wingsFolder then wingsFolder.Parent = on and char or nil end
+	end
+	function AngelWings.setAnim(on) state.anim = on end
+	function AngelWings.setFold(folded) state.fold = folded end
+	function AngelWings.setColor(name)
+		for i, p in ipairs(PALETTES) do
+			if p.name == name then state.paletteIdx = i end
 		end
-		hg.Color = ColorSequence.new(keys)
+		applyColors()
 	end
-	hg.Parent = hueBar
-	local hKnob = Instance.new("Frame")
-	hKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-	hKnob.Size = UDim2.fromOffset(8, 22)
-	hKnob.BackgroundColor3 = Color3.new(1, 1, 1)
-	hKnob.ZIndex = 3
-	hKnob.Parent = hueBar
-	corner(hKnob, 4)
-
-	local preview = Instance.new("Frame")
-	preview.AnchorPoint = Vector2.new(1, 0)
-	preview.Position = UDim2.new(1, -12, 0, 118)
-	preview.Size = UDim2.fromOffset(32, 24)
-	preview.BackgroundColor3 = C.on
-	preview.Parent = pc
-	corner(preview, 8)
-
-	local function refresh()
-		svBox.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
-		cur.Position = UDim2.fromScale(ss, 1 - vv)
-		hKnob.Position = UDim2.fromScale(hh, 0.5)
-		preview.BackgroundColor3 = Color3.fromHSV(hh, ss, vv)
+	function AngelWings.setGlow(on) state.glow = on; applyGlow() end
+	function AngelWings.setSparkles(on) state.sparkles = on; applySparkles() end
+	function AngelWings.setSize(name)
+		for i, s in ipairs(SCALES) do
+			if s.name == name then state.scaleIdx = i end
+		end
+		if wingsFolder then buildAll() end
 	end
-	refresh()
-
-	local function apply()
-		refresh()
-		setAccent(Color3.fromHSV(hh, ss, vv))
+	function AngelWings.setFeathers(on) state.feathers = on end
+	function AngelWings.setTrails(on) state.trails = on; applyFx() end
+	function AngelWings.setAura(on) state.aura = on; applyFx() end
+	function AngelWings.setHalo(on)
+		state.halo = on
+		if on then ensureBuilt() end
+		applyFx()
 	end
+	function AngelWings.cleanup()
+		dead = true
+		fxFolder:Destroy()
+		if haloFolder then haloFolder:Destroy() end
+		if wingsFolder then wingsFolder:Destroy() end
+	end
+end
 
-	dragArea(svBox, pane, function(rx, ry)
-		ss, vv = rx, 1 - ry
-		apply()
+
+--=====================================================================
+-- ЧАСТИНА 2 — вставити в КІНЕЦЬ buildFun (перед її "end")
+--=====================================================================
+	section(pane, "Angel Wings")
+	toggle(pane, "Angel Wings", "Layered angel wings (only you see them)", "AW_Wings", false, AngelWings.setWings)
+	selector(pane, "Angel color", "Feather color scheme", { "White", "Gold", "Black", "Ice", "Fire", "Pink" }, 1, "AW_Color", AngelWings.setColor)
+	selector(pane, "Angel size", "Wing scale", { "Mini", "Medium", "Large", "Huge" }, 2, "AW_Size", AngelWings.setSize)
+	selector(pane, "Angel pose", "Spread or folded", { "Spread", "Folded" }, 1, "AW_Pose", function(v)
+		AngelWings.setFold(v == "Folded")
 	end)
-	dragArea(hueBar, pane, function(rx)
-		hh = math.min(rx, 0.999)
-		apply()
-	end, true)
+	toggle(pane, "Angel flap", "Wing animation", "AW_Anim", true, AngelWings.setAnim)
+	toggle(pane, "Angel glow", "Neon feathers", "AW_Glow", false, AngelWings.setGlow)
+	toggle(pane, "Angel sparkles", "Golden sparks on feathers", "AW_Sparkles", true, AngelWings.setSparkles)
+	toggle(pane, "Falling feathers", "Feathers drift down", "AW_Feathers", true, AngelWings.setFeathers)
+	toggle(pane, "Angel trails", "Glowing wing-tip trails", "AW_Trails", true, AngelWings.setTrails)
+	toggle(pane, "Angel aura", "Light cast on surroundings", "AW_Aura", true, AngelWings.setAura)
+	toggle(pane, "Angel halo", "Floating golden ring", "AW_Halo", false, AngelWings.setHalo)
 
-	section(pane, "General")
-	toggle(pane, "Notifications", "Small toast at the top", "Notify", true, function(on)
-		flags.notify = on
-	end)
 
-	section(pane, "Interface")
-	slider(pane, "Menu size", "Scale of the window", 50, 110, math.floor(SCALE * 100), "MenuSize", function(v)
-		applyScale(v / 100)
-	end, "%")
+--=====================================================================
+-- ЧАСТИНА 3 — Unload: додати ПЕРШИМ рядком у callback кнопки
+--=====================================================================
 	button(pane, "Unload", "Remove the menu completely", "Unload", function()
+		AngelWings.cleanup()   -- <<< новий рядок
 		wingsClear()
 		haloClear()
-		local b = Lighting:FindFirstChild("AuroraBloom")
-		if b then b:Destroy() end
-		for _, c in ipairs(conns) do c:Disconnect() end
-		gui:Destroy()
-	end)
-end
-
----------------------------------------------------------------- ВКЛАДКИ (каркас)
-local tabs = {
-	{ "Main", "Main", buildMain },
-	{ "Combat", "Combat Settings", buildCombat },
-	{ "Player", "Player Settings", buildPlayer },
-	{ "Fun", "Fun", buildFun },
-	{ "Misc", "Misc", buildMisc },
-}
-
-local buttons, bars, panes, scrolls = {}, {}, {}, {}
-local current = nil
-
-local function selectTab(name)
-	if current == name then return end
-	current = name
-	for n, b in pairs(buttons) do
-		local sel = (n == name)
-		tw(b, 0.25, { BackgroundTransparency = sel and 0 or 1 })
-		tw(bars[n], 0.25, { BackgroundTransparency = sel and 0 or 1 })
-	end
-	for n, p in pairs(panes) do
-		if n ~= name then p.Visible = false end
-	end
-	local p = panes[name]
-	p.Visible = true
-	p.Position = UDim2.fromOffset(16, 0)
-	tw(p, 0.35, { Position = UDim2.fromOffset(0, 0) })
-	scrolls[name].CanvasPosition = Vector2.zero
-
-	for idx, row in ipairs(rowsByPane[scrolls[name]] or {}) do
-		row.BackgroundTransparency = 1
-		task.delay(0.05 + math.min(idx, 10) * 0.05, function()
-			tw(row, 0.35, { BackgroundTransparency = 0.25 })
-		end)
-	end
-end
-
-for i, tab in ipairs(tabs) do
-	local name, title, builder = tab[1], tab[2], tab[3]
-
-	local b = Instance.new("TextButton")
-	b.Text = "     " .. name
-	b.TextSize = 16
-	setFont(b)
-	b.TextColor3 = C.text
-	b.TextXAlignment = Enum.TextXAlignment.Left
-	b.AutoButtonColor = false
-	b.BackgroundColor3 = C.side
-	b.BackgroundTransparency = 1
-	b.AnchorPoint = Vector2.new(0.5, 0.5)
-	b.Size = UDim2.new(1, 0, 0, 42)
-	b.Position = UDim2.new(0.5, 0, 0, (i - 1) * 48 + 21)
-	b.Parent = sidebar
-	corner(b, 14)
-	pressFx(b, true)
-	buttons[name] = b
-
-	local bar = Instance.new("Frame")
-	bar.Size = UDim2.fromOffset(4, 20)
-	bar.Position = UDim2.new(0, 8, 0.5, -10)
-	bar.BackgroundColor3 = C.on
-	bar.BackgroundTransparency = 1
-	bar.BorderSizePixel = 0
-	bar.ZIndex = 6
-	bar.Parent = b
-	corner(bar, 2)
-	bars[name] = bar
-	onAccent(function(c) bar.BackgroundColor3 = c end)
-
-	b.MouseButton1Click:Connect(function() selectTab(name) end)
-	b.MouseEnter:Connect(function()
-		if current ~= name then tw(b, 0.2, { BackgroundTransparency = 0.6 }) end
-	end)
-	b.MouseLeave:Connect(function()
-		if current ~= name then tw(b, 0.2, { BackgroundTransparency = 1 }) end
-	end)
-
-	local p = Instance.new("Frame")
-	p.Size = UDim2.fromScale(1, 1)
-	p.BackgroundTransparency = 1
-	p.ClipsDescendants = true
-	p.Visible = false
-	p.Parent = pages
-	panes[name] = p
-
-	local sc = Instance.new("ScrollingFrame")
-	sc.Size = UDim2.fromScale(1, 1)
-	sc.BackgroundTransparency = 1
-	sc.BorderSizePixel = 0
-	sc.ScrollBarThickness = 4
-	sc.ElasticBehavior = Enum.ElasticBehavior.Always
-	sc.VerticalScrollBarInset = Enum.ScrollBarInset.None
-	sc.ScrollBarImageColor3 = C.on
-	sc.CanvasSize = UDim2.new()
-	sc.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	sc.ScrollingDirection = Enum.ScrollingDirection.Y
-	sc.Parent = p
-	scrolls[name] = sc
-	onAccent(function(c) sc.ScrollBarImageColor3 = c end)
-
-	local list = Instance.new("UIListLayout")
-	list.Padding = UDim.new(0, 6)
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Parent = sc
-	local pad = Instance.new("UIPadding")
-	pad.PaddingBottom = UDim.new(0, 16)
-	pad.Parent = sc
-
-	local head = label(sc, title, 19, C.text, UDim2.new(), UDim2.new(1, -8, 0, 28))
-	head.LayoutOrder = nextOrder(sc)
-
-	-- ВИПРАВЛЕННЯ 3: помилка в одній вкладці не ламає все меню
-	local okB, errB = pcall(builder, sc)
-	if not okB then
-		warn("[Aurora] помилка у вкладці " .. name .. ": " .. tostring(errB))
-	end
-end
-
----------------------------------------------------------------- КНОПКА ЗГОРТАННЯ
-local minBtn = Instance.new("TextButton")
-minBtn.Text = "-"
-minBtn.TextSize = 22
-minBtn.TextColor3 = C.text
-setFont(minBtn)
-minBtn.AutoButtonColor = false
-minBtn.BackgroundColor3 = C.side
-minBtn.AnchorPoint = Vector2.new(0.5, 0.5)
-minBtn.Size = UDim2.fromOffset(32, 32)
-minBtn.Position = UDim2.new(1, -30, 0, 28)
-minBtn.ZIndex = 5
-minBtn.Parent = win
-corner(minBtn, 16)
-pressFx(minBtn, false)
-
----------------------------------------------------------------- ВАТЕРМАРК
-local markRoot = Instance.new("Frame")
-markRoot.Name = "Watermark"
-markRoot.AnchorPoint = Vector2.new(0.5, 0.5)
-markRoot.Size = UDim2.fromOffset(36, 36)
-markRoot.Position = UDim2.fromOffset(34, 76)
-markRoot.BackgroundTransparency = 1
-markRoot.Parent = gui
-local markScale = Instance.new("UIScale")
-markScale.Parent = markRoot
-
-local function rounded(obj, scale)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(scale, 0)
-	c.Parent = obj
-end
-
-local pulse = Instance.new("Frame")
-pulse.AnchorPoint = Vector2.new(0.5, 0.5)
-pulse.Position = UDim2.fromScale(0.5, 0.5)
-pulse.Size = UDim2.fromOffset(36, 36)
-pulse.BackgroundTransparency = 1
-pulse.ZIndex = 9
-pulse.Parent = markRoot
-rounded(pulse, 0.27)
-local pulseStroke = Instance.new("UIStroke")
-pulseStroke.Thickness = 2
-pulseStroke.Color = C.on
-pulseStroke.Transparency = 0.2
-pulseStroke.Parent = pulse
-TweenService:Create(
-	pulse,
-	TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1, false),
-	{ Size = UDim2.fromOffset(58, 58) }
-):Play()
-TweenService:Create(
-	pulseStroke,
-	TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1, false),
-	{ Transparency = 1 }
-):Play()
-onAccent(function(c) pulseStroke.Color = c end)
-
-local spin = Instance.new("Frame")
-spin.AnchorPoint = Vector2.new(0.5, 0.5)
-spin.Position = UDim2.fromScale(0.5, 0.5)
-spin.Size = UDim2.fromOffset(46, 46)
-spin.BackgroundTransparency = 1
-spin.ZIndex = 9
-spin.Parent = markRoot
-rounded(spin, 0.27)
-local spinStroke = Instance.new("UIStroke")
-spinStroke.Thickness = 2
-spinStroke.Color = Color3.new(1, 1, 1)
-spinStroke.Parent = spin
-local spinGrad = Instance.new("UIGradient")
-spinGrad.Transparency = NumberSequence.new({
-	NumberSequenceKeypoint.new(0, 0),
-	NumberSequenceKeypoint.new(0.3, 1),
-	NumberSequenceKeypoint.new(0.7, 1),
-	NumberSequenceKeypoint.new(1, 0),
-})
-spinGrad.Parent = spinStroke
-
-local mark = Instance.new("ImageButton")
-mark.Size = UDim2.fromScale(1, 1)
-mark.BackgroundColor3 = C.bg
-mark.AutoButtonColor = false
-mark.Image = LOGO
-mark.ScaleType = Enum.ScaleType.Fit
-mark.ZIndex = 10
-mark.Parent = markRoot
-corner(mark, 10)
-local markStroke = Instance.new("UIStroke")
-markStroke.Thickness = 1.5
-markStroke.Color = C.on
-markStroke.Parent = mark
-onAccent(function(c) tw(markStroke, 0.3, { Color = c }) end)
-
----------------------------------------------------------------- ВІДКРИТТЯ / ЗАКРИТТЯ
-local token = 0
-setOpen = function(state)
-	token += 1
-	local my = token
-	spin.Visible = state
-	if state then
-		holder.Visible = true
-		uiScale.Scale = curScale * 0.8
-		win.GroupTransparency = 1
-		tw(uiScale, 0.45, { Scale = curScale }, Enum.EasingStyle.Back)
-		tw(win, 0.3, { GroupTransparency = 0 })
-	else
-		tw(uiScale, 0.25, { Scale = curScale * 0.8 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		local t = tw(win, 0.25, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		t.Completed:Connect(function()
-			if token == my then holder.Visible = false end
-		end)
-	end
-end
-
-local function flip()
-	isOpen = not isOpen
-	setOpen(isOpen)
-end
-
-makeDraggable(mark, markRoot, flip, function()
-	tw(markScale, 0.15, { Scale = 0.88 })
-end, function()
-	tw(markScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
-end)
-
-minBtn.Activated:Connect(function()
-	isOpen = false
-	setOpen(false)
-end)
-
-bind(UserInputService.InputBegan, function(i, processed)
-	if processed then return end
-	if i.KeyCode == HOTKEY then flip() end
-end)
-
----------------------------------------------------------------- ЄДИНИЙ ЦИКЛ АНІМАЦІЙ
-local rot, statTimer = 0, 0
-bind(RunService.RenderStepped, function(dt)
-	rot = (rot + dt * 70) % 360
-	fps += (1 / math.max(dt, 1e-4) - fps) * math.min(1, dt * 4)
-	if spin.Visible then spinGrad.Rotation = rot * 2 % 360 end
-	if not holder.Visible then return end
-
-	statTimer += dt
-	if statTimer > 0.5 and statsLabel then
-		statTimer = 0
-		local ok, ping = pcall(function() return lp:GetNetworkPing() * 1000 end)
-		-- ВИПРАВЛЕННЯ 2: %d потребує цілого числа
-		statsLabel.Text = string.format("FPS %d  |  Ping %d ms", math.floor(fps), math.floor(ok and ping or 0))
-	end
-end)
-
-_G.Aurora = { Settings = Settings, Hooks = Hooks, Notify = notify }
-
-selectTab("Main")
-applyTheme(THEMES[1])
-setOpen(true)
+		...
