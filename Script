@@ -10,6 +10,8 @@ local RunService = game:GetService("RunService")
 local lp = Players.LocalPlayer
 local playerGui = lp:WaitForChild("PlayerGui")
 
+if _G.AuroraUnload then pcall(_G.AuroraUnload) end
+
 -- прибрати попередній запуск
 local old = playerGui:FindFirstChild("AuroraMenu")
 if old then old:Destroy() end
@@ -621,6 +623,10 @@ local function cellButton(g, order, size)
 end
 
 
+local accRoot = Instance.new("Folder")
+accRoot.Name = "AuroraAccessories"
+accRoot.Parent = workspace
+
 ---------------------------------------------------------------- ANGEL WINGS (багатошарові крила + ефекти)
 local AngelWings = {}
 do
@@ -928,7 +934,7 @@ do
 		if not head then return end
 		local pal = PALETTES[state.paletteIdx]
 
-		haloFolder = Instance.new("Folder")
+		haloFolder = Instance.new("Model")
 		haloFolder.Name = "AngelHalo"
 
 		local root = Instance.new("Part")
@@ -979,7 +985,7 @@ do
 	local function applyFx()
 		for _, tr in ipairs(trails) do tr.Enabled = state.trails end
 		for _, l in ipairs(lights) do l.Enabled = state.aura end
-		if haloFolder then haloFolder.Parent = (state.halo and char) or nil end
+		if haloFolder then haloFolder.Parent = (state.halo and accRoot) or nil end
 	end
 
 	local function buildAll()
@@ -990,11 +996,11 @@ do
 		trails, lights, tipParts, haloParts = {}, {}, {}, {}
 		haloWeld, haloBase = nil, nil
 
-		wingsFolder = Instance.new("Folder")
+		wingsFolder = Instance.new("Model")
 		wingsFolder.Name = "AngelWings"
 		buildWing(1)
 		buildWing(-1)
-		wingsFolder.Parent = state.wings and char or nil
+		wingsFolder.Parent = state.wings and accRoot or nil
 		buildHalo()
 		applyFx()
 	end
@@ -1143,6 +1149,8 @@ do
 			warn("AngelWings: не знайдено Humanoid/HumanoidRootPart/торс")
 			return
 		end
+		if wingsFolder then wingsFolder:Destroy() end
+		if haloFolder then haloFolder:Destroy() end
 		char, humanoid, rootPart, torso = newChar, h, rp, ts
 		wingsFolder, haloFolder, haloWeld, haloBase = nil, nil, nil, nil
 		recolor, ripples, wingList, emitters = {}, {}, {}, {}
@@ -1150,6 +1158,11 @@ do
 		if state.wings or state.halo then buildAll() end
 	end
 
+	bind(lp.CharacterRemoving, function()
+		if wingsFolder then wingsFolder:Destroy() end
+		if haloFolder then haloFolder:Destroy() end
+		wingsFolder, haloFolder, haloWeld, haloBase = nil, nil, nil, nil
+	end)
 	bind(lp.CharacterAdded, onCharacter)
 	if lp.Character then task.spawn(onCharacter, lp.Character) end
 
@@ -1157,7 +1170,7 @@ do
 	function AngelWings.setWings(on)
 		state.wings = on
 		if on then ensureBuilt() end
-		if wingsFolder then wingsFolder.Parent = on and char or nil end
+		if wingsFolder then wingsFolder.Parent = on and accRoot or nil end
 	end
 	function AngelWings.setAnim(on) state.anim = on end
 	function AngelWings.setFold(folded) state.fold = folded end
@@ -1183,6 +1196,7 @@ do
 		if on then ensureBuilt() end
 		applyFx()
 	end
+	function AngelWings.getModel() return wingsFolder end
 	function AngelWings.cleanup()
 		dead = true
 		fxFolder:Destroy()
@@ -1192,7 +1206,7 @@ do
 end
 
 ---------------------------------------------------------------- CHINESE HAT (конічний бамбуковий капелюх)
-local ChineseHat = {}
+local Hats = {}
 do
 	local CYL = CFrame.Angles(0, 0, math.pi / 2) -- вісь циліндра: X -> Y
 	local BLACK, WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
@@ -1206,16 +1220,15 @@ do
 		{ name = "Jade",   base = Color3.fromRGB(112,196,164), alt = Color3.fromRGB(84,166,136),  rib = Color3.fromRGB(236,214,150), trim = Color3.fromRGB(236,214,150), strap = Color3.fromRGB(200,60,60),  knob = Color3.fromRGB(236,214,150), mat = Enum.Material.SmoothPlastic },
 		{ name = "Accent", dyn = true },
 	}
-	local SIZES = { { "Small", 0.8 }, { "Medium", 1 }, { "Large", 1.25 }, { "Huge", 1.6 } }
 	local TILTS = { Straight = { 0, 0 }, Back = { 0.2, 0 }, Forward = { -0.17, 0 }, Side = { 0, 0.2 } }
 
 	local state = {
-		on = false, style = 1, size = 2, tilt = "Straight",
+		on = false, kind = "Chinese", style = 1, tilt = "Straight", spin = true,
 		strap = true, weave = true, bands = true, glow = false, sway = true,
 	}
 
 	local folder, root, rootWeld, light, head, char
-	local recs, tassels = {}, {}
+	local recs, tassels, ringList = {}, {}, {}
 	local baseC0 = CFrame.new()
 	local dead = false
 
@@ -1234,6 +1247,7 @@ do
 
 	local function paint()
 		local s = getStyle()
+		local gl = state.glow or state.kind == "Rings"
 		for _, r in ipairs(recs) do
 			local k, p = r.kind, r.part
 			if k == "base" then
@@ -1244,27 +1258,27 @@ do
 				p.Color, p.Material = s.base:Lerp(BLACK, 0.5), s.mat
 			elseif k == "rib" then
 				p.Color = s.rib
-				p.Material = state.glow and Enum.Material.Neon or s.mat
+				p.Material = gl and Enum.Material.Neon or s.mat
 			elseif k == "trim" then
 				p.Color = s.trim
-				p.Material = state.glow and Enum.Material.Neon or Enum.Material.SmoothPlastic
+				p.Material = gl and Enum.Material.Neon or Enum.Material.SmoothPlastic
 			elseif k == "knob" then
 				p.Color = s.knob
-				p.Material = state.glow and Enum.Material.Neon or Enum.Material.SmoothPlastic
+				p.Material = gl and Enum.Material.Neon or Enum.Material.SmoothPlastic
 			elseif k == "strap" then
 				p.Color, p.Material = s.strap, Enum.Material.Fabric
 			end
 		end
 		if light then
 			light.Color = s.trim
-			light.Enabled = state.glow
+			light.Enabled = gl
 		end
 	end
 
 	local function clear()
 		if folder then folder:Destroy() end
 		folder, root, rootWeld, light = nil, nil, nil, nil
-		recs, tassels = {}, {}
+		recs, tassels, ringList = {}, {}, {}
 	end
 
 	local function build()
@@ -1273,10 +1287,10 @@ do
 		head = char and char:FindFirstChild("Head")
 		if not head then return end
 		local hs = head.Size
-		local S = SIZES[state.size][2]
+		local S = 1
 
-		folder = Instance.new("Folder")
-		folder.Name = "ChineseHat"
+		folder = Instance.new("Model")
+		folder.Name = "Hats"
 
 		root = Instance.new("Part")
 		root.Size = Vector3.new(0.2, 0.2, 0.2)
@@ -1290,7 +1304,7 @@ do
 		root.Parent = folder
 
 		-- центр крайки капелюха трохи нижче верху голови
-		local drop = 0.22 * hs.Y
+		local drop = (state.kind == "Rings" and 0.1 or 0.22) * hs.Y
 		baseC0 = CFrame.new(0, hs.Y / 2 - drop, 0)
 		rootWeld = Instance.new("Weld")
 		rootWeld.Part0 = head
@@ -1298,7 +1312,7 @@ do
 		rootWeld.C0 = baseC0
 		rootWeld.Parent = root
 
-		local function mk(kind, shape, size, cf)
+		local function mk(kind, shape, size, cf, parentPart)
 			local p = Instance.new("Part")
 			p.Shape = shape
 			p.Size = size
@@ -1312,7 +1326,7 @@ do
 			p.CFrame = head.CFrame
 			p.Parent = folder
 			local w = Instance.new("Weld")
-			w.Part0 = root
+			w.Part0 = parentPart or root
 			w.Part1 = p
 			w.C0 = cf
 			w.Parent = p
@@ -1320,6 +1334,28 @@ do
 			return p, w
 		end
 
+		if state.kind == "Rings" then
+			-- капелюх тільки з кілець: стопка кілець, що зменшуються догори, і обертаються у різні боки
+			local Blk, Ball = Enum.PartType.Block, Enum.PartType.Ball
+			local nR = 7
+			for i = 1, nR do
+				local t = (i - 1) / (nR - 1)
+				local r = 1.5 * (1 - 0.82 * t ^ 1.15)
+				local y = 0.05 + (i - 1) * 0.17
+				local th = i == 1 and 0.13 or 0.09
+				local rr, rw = mk("ringroot", Blk, Vector3.new(0.1, 0.1, 0.1), CFrame.new(0, y, 0))
+				rr.Transparency = 1
+				local n = math.max(10, math.floor(r * 15))
+				local seg = 2 * math.pi * r / n
+				for k = 1, n do
+					local a = (k - 1) / n * math.pi * 2
+					mk((k % 2 == 0) and "rib" or "trim", Blk, Vector3.new(seg * 0.82, th, th),
+						CFrame.Angles(0, a, 0) * CFrame.new(0, 0, r), rr)
+				end
+				ringList[#ringList + 1] = { weld = rw, y = y, spd = (i % 2 == 0 and 1 or -1) * (0.5 + 0.18 * i), ang = i * 0.7 }
+			end
+			mk("knob", Ball, Vector3.new(0.2, 0.2, 0.2), CFrame.new(0, 0.05 + (nR - 1) * 0.17 + 0.12, 0))
+		else
 		local R, H, N, pw = 1.85 * S, 1.3 * S, 30, 1.1
 		local function prof(t) return R * (1 - t) ^ pw end
 		local Cyl, Blk, Ball = Enum.PartType.Cylinder, Enum.PartType.Block, Enum.PartType.Ball
@@ -1391,6 +1427,8 @@ do
 			end
 		end
 
+		end
+
 		light = Instance.new("PointLight")
 		light.Range = 10
 		light.Brightness = 1.2
@@ -1398,7 +1436,7 @@ do
 		light.Parent = root
 
 		paint()
-		folder.Parent = state.on and char or nil
+		folder.Parent = state.on and accRoot or nil
 	end
 
 	-- анімація: пружини для нахилу від руху, колихання китиць
@@ -1435,6 +1473,13 @@ do
 		rootWeld.C0 = baseC0 * CFrame.new(0, yo, 0)
 			* CFrame.Angles(pitch + tilt[1] + idle * 0.6, 0, roll + tilt[2] + idle)
 
+		if state.spin then
+			for _, rg in ipairs(ringList) do
+				rg.ang += rg.spd * dt
+				rg.weld.C0 = CFrame.new(0, rg.y, 0) * CFrame.Angles(0, rg.ang, 0)
+			end
+		end
+
 		local k = state.sway and 1 or 0.3
 		for _, ts in ipairs(tassels) do
 			local ax = -2.4 * pitch + math.sin(clock * 2 + ts.ph) * 0.06 * k
@@ -1445,6 +1490,7 @@ do
 		end
 	end)
 
+	bind(lp.CharacterRemoving, function() clear() end)
 	bind(lp.CharacterAdded, function(c)
 		clear()
 		if not state.on then return end
@@ -1463,32 +1509,131 @@ do
 	end)
 
 	-- API для меню
-	function ChineseHat.setEnabled(on)
+	function Hats.setEnabled(on)
 		state.on = on
 		if on and not folder then build() end
-		if folder then folder.Parent = on and char or nil end
+		if folder then folder.Parent = on and accRoot or nil end
 	end
-	function ChineseHat.setStyle(name)
+	function Hats.setStyle(name)
 		for i, s in ipairs(STYLES) do
 			if s.name == name then state.style = i end
 		end
 		paint()
 	end
-	function ChineseHat.setSize(name)
-		for i, s in ipairs(SIZES) do
-			if s[1] == name then state.size = i end
-		end
+	function Hats.setType(name)
+		state.kind = name
 		if folder then build() end
 	end
-	function ChineseHat.setTilt(name) state.tilt = name end
-	function ChineseHat.setStrap(on) state.strap = on; if folder then build() end end
-	function ChineseHat.setWeave(on) state.weave = on; if folder then build() end end
-	function ChineseHat.setBands(on) state.bands = on; if folder then build() end end
-	function ChineseHat.setGlow(on) state.glow = on; paint() end
-	function ChineseHat.setSway(on) state.sway = on end
-	function ChineseHat.cleanup()
+	function Hats.setSpin(on) state.spin = on end
+	function Hats.getModel() return folder end
+	function Hats.setTilt(name) state.tilt = name end
+	function Hats.setStrap(on) state.strap = on; if folder then build() end end
+	function Hats.setWeave(on) state.weave = on; if folder then build() end end
+	function Hats.setBands(on) state.bands = on; if folder then build() end end
+	function Hats.setGlow(on) state.glow = on; paint() end
+	function Hats.setSway(on) state.sway = on end
+	function Hats.cleanup()
 		dead = true
 		clear()
+	end
+end
+
+---------------------------------------------------------------- CHAMS (переливчасте підсвічування: тіло / крила / капелюх)
+local Chams = {}
+do
+	local WHITE = Color3.new(1, 1, 1)
+	local PAL = {
+		Aurora = { Color3.fromRGB(70, 230, 255), Color3.fromRGB(150, 100, 255), Color3.fromRGB(255, 110, 220) },
+		Ice = { Color3.fromRGB(110, 190, 255), Color3.fromRGB(215, 245, 255), Color3.fromRGB(150, 140, 255) },
+		Fire = { Color3.fromRGB(255, 60, 40), Color3.fromRGB(255, 150, 40), Color3.fromRGB(255, 225, 90) },
+	}
+	local SPEEDS = { Normal = 1, Slow = 0.4, Fast = 2.2 }
+	local FILLS = { Medium = 0.5, Light = 0.75, Strong = 0.25, Full = 0 }
+
+	local state = {
+		on = false, body = true, wings = true, hat = true,
+		mode = "Rainbow", speed = 1, fill = 0.5, outline = true, walls = true,
+	}
+
+	local container = Instance.new("Folder")
+	container.Name = "AuroraChams"
+	container.Parent = workspace
+
+	local hl = {}
+	local order = { body = 0, wings = 0.33, hat = 0.66 }
+	local clock = 0
+	local dead = false
+
+	local function cyc(list, x)
+		local n = #list
+		x = x % n
+		local i = math.floor(x)
+		local f = x - i
+		f = f * f * (3 - 2 * f)
+		return list[i + 1]:Lerp(list[(i + 1) % n + 1], f)
+	end
+
+	local function colorFor(t, off)
+		local m = state.mode
+		if m == "Rainbow" then
+			return Color3.fromHSV((t * 0.15 + off) % 1, 0.75, 1)
+		elseif m == "Accent" then
+			return C.on:Lerp(WHITE, 0.55 + 0.45 * math.sin(t * 2 + off * 6))
+		end
+		return cyc(PAL[m] or PAL.Aurora, t * 0.4 + off * 3)
+	end
+
+	local function targetOf(kind)
+		if kind == "body" then return lp.Character end
+		if kind == "wings" then return AngelWings.getModel() end
+		return Hats.getModel()
+	end
+
+	local function drop(kind)
+		if hl[kind] then
+			hl[kind]:Destroy()
+			hl[kind] = nil
+		end
+	end
+
+	bind(RunService.RenderStepped, function(dt)
+		if dead then return end
+		clock += dt * state.speed
+		for kind, off in pairs(order) do
+			local model = targetOf(kind)
+			if state.on and state[kind] and model and model.Parent then
+				local h = hl[kind]
+				if not h or not h.Parent then
+					h = Instance.new("Highlight")
+					h.Name = kind
+					h.Parent = container
+					hl[kind] = h
+				end
+				if h.Adornee ~= model then h.Adornee = model end
+				local col = colorFor(clock, off)
+				h.FillColor = col
+				h.OutlineColor = col:Lerp(WHITE, 0.55)
+				h.FillTransparency = math.clamp(state.fill + 0.08 * math.sin(clock * 3 + off * 5), 0, 1)
+				h.OutlineTransparency = state.outline and 0 or 1
+				h.DepthMode = state.walls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+			else
+				drop(kind)
+			end
+		end
+	end)
+
+	function Chams.setEnabled(on) state.on = on end
+	function Chams.setBody(on) state.body = on end
+	function Chams.setWings(on) state.wings = on end
+	function Chams.setHat(on) state.hat = on end
+	function Chams.setMode(v) state.mode = v end
+	function Chams.setSpeed(v) state.speed = SPEEDS[v] or 1 end
+	function Chams.setFill(v) state.fill = FILLS[v] or 0.5 end
+	function Chams.setOutline(on) state.outline = on end
+	function Chams.setWalls(on) state.walls = on end
+	function Chams.cleanup()
+		dead = true
+		container:Destroy()
 	end
 end
 
@@ -1565,16 +1710,23 @@ local function buildFun(pane)
 		pressFx(gear, false)
 
 		local opts = {}
-		local function miniRow(name)
+		local open = false
+		local function refresh()
+			for _, o in ipairs(opts) do
+				o.row.Visible = open and (not o.cond or o.cond())
+			end
+		end
+
+		local function miniRow(name, cond)
 			local row = card(pane, 34)
 			row.Visible = false
-			opts[#opts + 1] = row
+			opts[#opts + 1] = { row = row, cond = cond }
 			label(row, name, 15, C.text, UDim2.fromOffset(12, 7), UDim2.fromOffset(170, 20))
 			return row
 		end
 
-		local function mtoggle(name, f, default, callback)
-			local row = miniRow(name)
+		local function mtoggle(name, f, default, callback, cond)
+			local row = miniRow(name, cond)
 			local on = default
 			Settings[f] = on
 			local hit = hitArea(row)
@@ -1603,8 +1755,8 @@ local function buildFun(pane)
 			end)
 		end
 
-		local function mselect(name, f, options, callback)
-			local row = miniRow(name)
+		local function mselect(name, f, options, callback, cond)
+			local row = miniRow(name, cond)
 			local idx = 1
 			Settings[f] = options[1]
 			local b = pill(row, options[1])
@@ -1619,19 +1771,19 @@ local function buildFun(pane)
 			end)
 		end
 
-		local open = false
 		gear.Activated:Connect(function()
 			open = not open
-			for _, r in ipairs(opts) do r.Visible = open end
+			refresh()
 			tw(gear, 0.35, { Rotation = open and 90 or 0, BackgroundColor3 = open and C.on or C.off }, Enum.EasingStyle.Back)
 		end)
 		onAccent(function(c)
 			if open then gear.BackgroundColor3 = c end
 		end)
 
-		return mtoggle, mselect
+		return mtoggle, mselect, refresh
 	end
 
+	-- КРИЛА
 	section(pane, "Wings")
 	local wt, ws = group("Angel Wings", "Only you see them", "AW_Wings", AngelWings.setWings)
 	ws("Color", "AW_Color", { "White", "Gold", "Black", "Ice", "Fire", "Pink" }, AngelWings.setColor)
@@ -1647,16 +1799,37 @@ local function buildFun(pane)
 	wt("Aura", "AW_Aura", true, AngelWings.setAura)
 	wt("Halo", "AW_Halo", false, AngelWings.setHalo)
 
+	-- КАПЕЛЮХИ
 	section(pane, "Hat")
-	local ht, hsel = group("Chinese Hat", "Conical woven hat", "CH_On", ChineseHat.setEnabled)
-	hsel("Style", "CH_Style", { "Straw", "Bamboo", "Black", "Red", "Gold", "Jade", "Accent" }, ChineseHat.setStyle)
-	hsel("Size", "CH_Size", { "Medium", "Large", "Huge", "Small" }, ChineseHat.setSize)
-	hsel("Tilt", "CH_Tilt", { "Straight", "Back", "Forward", "Side" }, ChineseHat.setTilt)
-	ht("Chin strap", "CH_Strap", true, ChineseHat.setStrap)
-	ht("Weave ribs", "CH_Weave", true, ChineseHat.setWeave)
-	ht("Bands", "CH_Bands", true, ChineseHat.setBands)
-	ht("Glow", "CH_Glow", false, ChineseHat.setGlow)
-	ht("Sway", "CH_Sway", true, ChineseHat.setSway)
+	local hatKind = "Chinese"
+	local function isChinese() return hatKind == "Chinese" end
+	local function isRings() return hatKind == "Rings" end
+	local ht, hsel, hrefresh = group("Hat", "Chinese hat or ring hat", "HT_On", Hats.setEnabled)
+	hsel("Type", "HT_Type", { "Chinese", "Rings" }, function(v)
+		hatKind = v
+		Hats.setType(v)
+		hrefresh()
+	end)
+	hsel("Style", "HT_Style", { "Straw", "Bamboo", "Black", "Red", "Gold", "Jade", "Accent" }, Hats.setStyle)
+	hsel("Tilt", "HT_Tilt", { "Straight", "Back", "Forward", "Side" }, Hats.setTilt)
+	ht("Chin strap", "HT_Strap", true, Hats.setStrap, isChinese)
+	ht("Weave ribs", "HT_Weave", true, Hats.setWeave, isChinese)
+	ht("Bands", "HT_Bands", true, Hats.setBands, isChinese)
+	ht("Spin rings", "HT_Spin", true, Hats.setSpin, isRings)
+	ht("Glow", "HT_Glow", false, Hats.setGlow)
+	ht("Sway", "HT_Sway", true, Hats.setSway)
+
+	-- CHAMS
+	section(pane, "Chams")
+	local ct, cs = group("Chams", "Shimmering outline and fill", "CM_On", Chams.setEnabled)
+	ct("Body", "CM_Body", true, Chams.setBody)
+	ct("Wings", "CM_Wings", true, Chams.setWings)
+	ct("Hat", "CM_Hat", true, Chams.setHat)
+	cs("Mode", "CM_Mode", { "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, Chams.setMode)
+	cs("Speed", "CM_Speed", { "Normal", "Slow", "Fast" }, Chams.setSpeed)
+	cs("Fill", "CM_Fill", { "Medium", "Light", "Strong", "Full" }, Chams.setFill)
+	ct("Outline", "CM_Outline", true, Chams.setOutline)
+	ct("Through walls", "CM_Walls", true, Chams.setWalls)
 end
 
 local function buildMisc(pane)
@@ -1813,10 +1986,7 @@ local function buildMisc(pane)
 		applyScale(v / 100)
 	end, "%")
 	button(pane, "Unload", "Remove the menu completely", "Unload", function()
-		AngelWings.cleanup()
-		ChineseHat.cleanup()
-		for _, c in ipairs(conns) do c:Disconnect() end
-		gui:Destroy()
+		if _G.AuroraUnload then _G.AuroraUnload() end
 	end)
 end
 
@@ -2076,6 +2246,16 @@ bind(RunService.RenderStepped, function(dt)
 		statsLabel.Text = string.format("FPS %d  |  Ping %d ms", math.floor(fps), math.floor(ok and ping or 0))
 	end
 end)
+
+local function unloadAll()
+	pcall(function() AngelWings.cleanup() end)
+	pcall(function() Hats.cleanup() end)
+	pcall(function() Chams.cleanup() end)
+	pcall(function() accRoot:Destroy() end)
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	pcall(function() gui:Destroy() end)
+end
+_G.AuroraUnload = unloadAll
 
 _G.Aurora = { Settings = Settings, Hooks = Hooks, Notify = notify }
 
