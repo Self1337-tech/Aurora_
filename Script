@@ -1212,6 +1212,7 @@ do
 	local BLACK, WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
 
 	local STYLES = {
+		{ name = "Lavender", base = Color3.fromRGB(226,188,240), alt = Color3.fromRGB(206,166,226), rib = Color3.fromRGB(245,228,252), trim = Color3.fromRGB(244,222,252), strap = Color3.fromRGB(170,110,200), knob = Color3.fromRGB(250,238,255), mat = Enum.Material.SmoothPlastic },
 		{ name = "Straw",  base = Color3.fromRGB(226,196,128), alt = Color3.fromRGB(204,170,100), rib = Color3.fromRGB(168,128,66),  trim = Color3.fromRGB(120,80,42),   strap = Color3.fromRGB(176,38,38),  knob = Color3.fromRGB(110,72,36),   mat = Enum.Material.Fabric },
 		{ name = "Bamboo", base = Color3.fromRGB(160,176,92),  alt = Color3.fromRGB(134,152,74),  rib = Color3.fromRGB(96,112,48),   trim = Color3.fromRGB(70,84,36),    strap = Color3.fromRGB(190,60,50),  knob = Color3.fromRGB(80,64,32),    mat = Enum.Material.Fabric },
 		{ name = "Black",  base = Color3.fromRGB(30,30,36),    alt = Color3.fromRGB(46,46,54),    rib = Color3.fromRGB(212,172,70),  trim = Color3.fromRGB(212,172,70),  strap = Color3.fromRGB(170,30,38),  knob = Color3.fromRGB(212,172,70),  mat = Enum.Material.SmoothPlastic },
@@ -1223,7 +1224,7 @@ do
 	local TILTS = { Straight = { 0, 0 }, Back = { 0.2, 0 }, Forward = { -0.17, 0 }, Side = { 0, 0.2 } }
 
 	local state = {
-		on = false, kind = "Chinese", style = 1, tilt = "Straight", spin = true,
+		on = false, kind = "Smooth", style = 1, tilt = "Straight", spin = true,
 		strap = true, weave = true, bands = true, glow = false, sway = true,
 	}
 
@@ -1355,6 +1356,62 @@ do
 				ringList[#ringList + 1] = { weld = rw, y = y, spd = (i % 2 == 0 and 1 or -1) * (0.5 + 0.18 * i), ang = i * 0.7 }
 			end
 			mk("knob", Ball, Vector3.new(0.2, 0.2, 0.2), CFrame.new(0, 0.05 + (nR - 1) * 0.17 + 0.12, 0))
+		elseif state.kind == "Smooth" then
+			-- гладкий конус із трикутників (WedgePart) — суцільна поверхня без ступенів і ребер
+			local R, H, N = 2.1, 1.25, 40
+			local function mkW(kind, size, cf)
+				local p = Instance.new("WedgePart")
+				p.Size = size
+				p.Massless = true
+				p.CanCollide = false
+				p.CanTouch = false
+				p.CanQuery = false
+				p.CastShadow = false
+				p.TopSurface = Enum.SurfaceType.Smooth
+				p.BottomSurface = Enum.SurfaceType.Smooth
+				p.CFrame = head.CFrame
+				p.Parent = folder
+				local w = Instance.new("Weld")
+				w.Part0 = root
+				w.Part1 = p
+				w.C0 = cf
+				w.Parent = p
+				recs[#recs + 1] = { part = p, weld = w, kind = kind }
+			end
+			local function tri(kind, a, b, c)
+				local ab, ac, bc = b - a, c - a, c - b
+				local abd, acd, bcd = ab:Dot(ab), ac:Dot(ac), bc:Dot(bc)
+				if abd > acd and abd > bcd then
+					c, a = a, c
+				elseif acd > bcd and acd > abd then
+					a, b = b, a
+				end
+				ab, ac, bc = b - a, c - a, c - b
+				local right = ac:Cross(ab).Unit
+				local up = bc:Cross(right).Unit
+				local back = bc.Unit
+				local height = math.abs(ab:Dot(up))
+				mkW(kind, Vector3.new(0.02, height, math.abs(ab:Dot(back))),
+					CFrame.fromMatrix((a + b) / 2, right, up, back))
+				mkW(kind, Vector3.new(0.02, height, math.abs(ac:Dot(back))),
+					CFrame.fromMatrix((a + c) / 2, -right, up, -back))
+			end
+			local apex = Vector3.new(0, H, 0)
+			for i = 1, N do
+				local a0 = (i - 1) / N * math.pi * 2
+				local a1 = i / N * math.pi * 2
+				tri("base", apex,
+					Vector3.new(R * math.cos(a0), 0, R * math.sin(a0)),
+					Vector3.new(R * math.cos(a1), 0, R * math.sin(a1)))
+			end
+			-- тонкий обідок по краю крайки
+			local n2 = 56
+			local seg = 2 * math.pi * R / n2
+			for i = 1, n2 do
+				local a = (i - 1) / n2 * math.pi * 2
+				mk("trim", Enum.PartType.Block, Vector3.new(seg * 1.04, 0.07, 0.09),
+					CFrame.Angles(0, a, 0) * CFrame.new(0, 0, R))
+			end
 		else
 		local R, H, N, pw = 1.85 * S, 1.3 * S, 30, 1.1
 		local function prof(t) return R * (1 - t) ^ pw end
@@ -1548,11 +1605,11 @@ do
 		Fire = { Color3.fromRGB(255, 60, 40), Color3.fromRGB(255, 150, 40), Color3.fromRGB(255, 225, 90) },
 	}
 	local SPEEDS = { Normal = 1, Slow = 0.4, Fast = 2.2 }
-	local FILLS = { Medium = 0.5, Light = 0.75, Strong = 0.25, Full = 0 }
+	local FILLS = { Light = 0.7, Medium = 0.5, Strong = 0.25, Full = 0 }
 
 	local state = {
 		on = false, body = true, wings = true, hat = true,
-		mode = "Rainbow", speed = 1, fill = 0.5, outline = true, walls = true,
+		mode = "Ghost", speed = 1, fill = 0.7, outline = true, walls = true,
 	}
 
 	local container = Instance.new("Folder")
@@ -1575,7 +1632,9 @@ do
 
 	local function colorFor(t, off)
 		local m = state.mode
-		if m == "Rainbow" then
+		if m == "Ghost" then
+			return Color3.fromRGB(205, 172, 255):Lerp(WHITE, 0.3 + 0.2 * math.sin(t * 1.5 + off * 4))
+		elseif m == "Rainbow" then
 			return Color3.fromHSV((t * 0.15 + off) % 1, 0.75, 1)
 		elseif m == "Accent" then
 			return C.on:Lerp(WHITE, 0.55 + 0.45 * math.sin(t * 2 + off * 6))
@@ -1801,20 +1860,20 @@ local function buildFun(pane)
 
 	-- КАПЕЛЮХИ
 	section(pane, "Hat")
-	local hatKind = "Chinese"
-	local function isChinese() return hatKind == "Chinese" end
+	local hatKind = "Smooth"
+	local function isWoven() return hatKind == "Woven" end
 	local function isRings() return hatKind == "Rings" end
-	local ht, hsel, hrefresh = group("Hat", "Chinese hat or ring hat", "HT_On", Hats.setEnabled)
-	hsel("Type", "HT_Type", { "Chinese", "Rings" }, function(v)
+	local ht, hsel, hrefresh = group("Hat", "Smooth, woven or ring hat", "HT_On", Hats.setEnabled)
+	hsel("Type", "HT_Type", { "Smooth", "Woven", "Rings" }, function(v)
 		hatKind = v
 		Hats.setType(v)
 		hrefresh()
 	end)
-	hsel("Style", "HT_Style", { "Straw", "Bamboo", "Black", "Red", "Gold", "Jade", "Accent" }, Hats.setStyle)
+	hsel("Style", "HT_Style", { "Lavender", "Straw", "Bamboo", "Black", "Red", "Gold", "Jade", "Accent" }, Hats.setStyle)
 	hsel("Tilt", "HT_Tilt", { "Straight", "Back", "Forward", "Side" }, Hats.setTilt)
-	ht("Chin strap", "HT_Strap", true, Hats.setStrap, isChinese)
-	ht("Weave ribs", "HT_Weave", true, Hats.setWeave, isChinese)
-	ht("Bands", "HT_Bands", true, Hats.setBands, isChinese)
+	ht("Chin strap", "HT_Strap", true, Hats.setStrap, isWoven)
+	ht("Weave ribs", "HT_Weave", true, Hats.setWeave, isWoven)
+	ht("Bands", "HT_Bands", true, Hats.setBands, isWoven)
 	ht("Spin rings", "HT_Spin", true, Hats.setSpin, isRings)
 	ht("Glow", "HT_Glow", false, Hats.setGlow)
 	ht("Sway", "HT_Sway", true, Hats.setSway)
@@ -1825,9 +1884,9 @@ local function buildFun(pane)
 	ct("Body", "CM_Body", true, Chams.setBody)
 	ct("Wings", "CM_Wings", true, Chams.setWings)
 	ct("Hat", "CM_Hat", true, Chams.setHat)
-	cs("Mode", "CM_Mode", { "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, Chams.setMode)
+	cs("Mode", "CM_Mode", { "Ghost", "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, Chams.setMode)
 	cs("Speed", "CM_Speed", { "Normal", "Slow", "Fast" }, Chams.setSpeed)
-	cs("Fill", "CM_Fill", { "Medium", "Light", "Strong", "Full" }, Chams.setFill)
+	cs("Fill", "CM_Fill", { "Light", "Medium", "Strong", "Full" }, Chams.setFill)
 	ct("Outline", "CM_Outline", true, Chams.setOutline)
 	ct("Through walls", "CM_Walls", true, Chams.setWalls)
 end
