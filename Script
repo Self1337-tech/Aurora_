@@ -1,15 +1,626 @@
---=====================================================================
---  ANGEL WINGS -> Aurora Menu : інтеграція в 3 кроки
---  Крок 1: вставити ЧАСТИНУ 1 перед рядком
---          ---------------------------------------------------------------- ВКЛАДКИ (вміст)
---  Крок 2: вставити ЧАСТИНУ 2 в кінець функції buildFun (перед її "end")
---  Крок 3: вставити ЧАСТИНУ 3 в кнопку Unload (першим рядком у callback)
---=====================================================================
+-- Aurora Menu v5 + Angel Wings (єдиний готовий скрипт)
+-- LocalScript -> StarterGui / StarterPlayerScripts, або просто в executor
+-- Відкрити/закрити: RightShift або тап по значку
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local lp = Players.LocalPlayer
+local playerGui = lp:WaitForChild("PlayerGui")
+
+-- прибрати попередній запуск
+local old = playerGui:FindFirstChild("AuroraMenu")
+if old then old:Destroy() end
+
+---------------------------------------------------------------- НАЛАШТУВАННЯ
+local SCALE = 0.72
+local LOGO = "rbxassetid://119019582244016"
+local FONT = Enum.Font.Arcade
+local DRAG_SMOOTH = 22
+local HOTKEY = Enum.KeyCode.RightShift
+local THEMES = {
+	"129218217963882",
+	"126225202594489",
+	"81522608761386",
+	"70457674253829",
+	"87842701397260",
+}
+local ACCENTS = {
+	{ "Purple", Color3.fromRGB(124, 92, 255) },
+}
+----------------------------------------------------------------
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "AuroraMenu"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = playerGui
+
+local C = {
+	bg = Color3.fromRGB(10, 9, 16),
+	side = Color3.fromRGB(20, 19, 28),
+	text = Color3.fromRGB(241, 240, 245),
+	muted = Color3.fromRGB(140, 138, 153),
+	off = Color3.fromRGB(42, 41, 53),
+	on = ACCENTS[1][2],
+}
+
+local flags = { notify = true }
+local curScale = SCALE
+
+local Settings, Hooks = {}, {}
+local function fire(flag, value)
+	if not flag then return end
+	Settings[flag] = value
+	local h = Hooks[flag]
+	if h then task.spawn(h, value) end
+end
+
+local conns = {}
+local function bind(signal, fn)
+	local c = signal:Connect(fn)
+	table.insert(conns, c)
+	return c
+end
+
+local accentFns = {}
+local function onAccent(fn) table.insert(accentFns, fn) end
+local function setAccent(col)
+	C.on = col
+	for _, fn in ipairs(accentFns) do fn(col) end
+end
+
+local function tw(obj, t, props, style, dir)
+	local tween = TweenService:Create(
+		obj,
+		TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
+		props
+	)
+	tween:Play()
+	return tween
+end
+
+local function corner(obj, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r)
+	c.Parent = obj
+	return c
+end
+
+local function label(parent, text, size, color, pos, sz)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextSize = size
+	l.TextColor3 = color
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextTruncate = Enum.TextTruncate.AtEnd
+	l.Font = FONT
+	l.Position = pos
+	l.Size = sz
+	l.Parent = parent
+	return l
+end
+
+local uiScale = Instance.new("UIScale")
+uiScale.Scale = SCALE
+
+---------------------------------------------------------------- СПОВІЩЕННЯ
+local toast = nil
+local function notify(text)
+	if not flags.notify then return end
+	if toast then toast:Destroy() end
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0)
+	f.Size = UDim2.fromOffset(260, 38)
+	f.Position = UDim2.new(0.5, 0, 0, -60)
+	f.BackgroundColor3 = C.bg
+	f.BorderSizePixel = 0
+	f.ZIndex = 20
+	f.Parent = gui
+	corner(f, 19)
+	local st = Instance.new("UIStroke")
+	st.Color = C.on
+	st.Thickness = 2
+	st.Parent = f
+	local l = label(f, text, 14, C.text, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1))
+	l.TextXAlignment = Enum.TextXAlignment.Center
+	l.ZIndex = 21
+	toast = f
+	tw(f, 0.45, { Position = UDim2.new(0.5, 0, 0, 18) }, Enum.EasingStyle.Back)
+	task.delay(1.8, function()
+		if toast ~= f then return end
+		local t = tw(f, 0.3, { Position = UDim2.new(0.5, 0, 0, -60) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		t.Completed:Connect(function()
+			if toast == f then toast = nil end
+			f:Destroy()
+		end)
+	end)
+end
+
+---------------------------------------------------------------- ЕФЕКТ НАТИСКАННЯ
+local function isPress(i)
+	return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
+end
+
+local function pressFx(btn, ripple, noScale)
+	local sc = Instance.new("UIScale")
+	sc.Parent = btn
+	if ripple then btn.ClipsDescendants = true end
+	btn.InputBegan:Connect(function(i)
+		if not isPress(i) then return end
+		if not noScale then tw(sc, 0.1, { Scale = 0.95 }) end
+		if ripple then
+			local rel = (Vector2.new(i.Position.X, i.Position.Y) - btn.AbsolutePosition) / uiScale.Scale
+			local r = Instance.new("Frame")
+			r.AnchorPoint = Vector2.new(0.5, 0.5)
+			r.Position = UDim2.fromOffset(rel.X, rel.Y)
+			r.Size = UDim2.fromOffset(0, 0)
+			r.BackgroundColor3 = Color3.new(1, 1, 1)
+			r.BackgroundTransparency = 0.8
+			r.BorderSizePixel = 0
+			r.ZIndex = 5
+			r.Parent = btn
+			corner(r, 200)
+			tw(r, 0.55, { Size = UDim2.fromOffset(150, 150), BackgroundTransparency = 1 })
+			task.delay(0.6, function() r:Destroy() end)
+		end
+	end)
+	btn.InputEnded:Connect(function(i)
+		if isPress(i) and not noScale then tw(sc, 0.3, { Scale = 1 }, Enum.EasingStyle.Back) end
+	end)
+end
+
+---------------------------------------------------------------- ПЕРЕТЯГУВАННЯ
+local HOLD_TIME = 0.18
+local HOLD_SLOP = 24
+local function makeDraggable(handle, target, onClick, onPress, onRelease)
+	local dragInput, moved, held, dead = nil, false, false, false
+	local startInput, startPos
+	local goal, cur = Vector2.zero, Vector2.zero
+	local conn
+	local holdId = 0
+
+	local function apply()
+		target.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + cur.X,
+			startPos.Y.Scale, startPos.Y.Offset + cur.Y
+		)
+	end
+
+	local function ensureLoop()
+		if conn then return end
+		conn = RunService.RenderStepped:Connect(function(dt)
+			cur = cur:Lerp(goal, 1 - math.exp(-dt * DRAG_SMOOTH))
+			apply()
+			if not dragInput and (goal - cur).Magnitude < 0.3 then
+				cur = goal
+				apply()
+				conn:Disconnect()
+				conn = nil
+			end
+		end)
+	end
+
+	handle.InputBegan:Connect(function(i)
+		if dragInput or not isPress(i) then return end
+		dragInput, moved, held, dead = i, false, false, false
+		startInput = Vector2.new(i.Position.X, i.Position.Y)
+		startPos = target.Position
+		cur, goal = Vector2.zero, Vector2.zero
+		holdId += 1
+		local my = holdId
+		task.delay(HOLD_TIME, function()
+			if dragInput == i and holdId == my and not dead then
+				held = true
+				if onPress then onPress() end
+			end
+		end)
+	end)
+
+	bind(UserInputService.InputChanged, function(i)
+		if not dragInput then return end
+		local mine
+		if dragInput.UserInputType == Enum.UserInputType.Touch then
+			mine = (i == dragInput)
+		else
+			mine = (i.UserInputType == Enum.UserInputType.MouseMovement)
+		end
+		if not mine then return end
+		local d = Vector2.new(i.Position.X, i.Position.Y) - startInput
+		if not held then
+			if d.Magnitude > HOLD_SLOP then dead = true end
+			return
+		end
+		if not moved and d.Magnitude > 3 then
+			moved = true
+			ensureLoop()
+		end
+		if moved then goal = d end
+	end)
+
+	bind(UserInputService.InputEnded, function(i)
+		if not dragInput then return end
+		local mine = (i == dragInput)
+			or (dragInput.UserInputType == Enum.UserInputType.MouseButton1 and i.UserInputType == Enum.UserInputType.MouseButton1)
+		if not mine then return end
+		dragInput = nil
+		if held then
+			if onRelease then onRelease() end
+		elseif not dead and onClick then
+			onClick()
+		end
+	end)
+end
+
+---------------------------------------------------------------- ВІКНО
+local holder = Instance.new("Frame")
+holder.Size = UDim2.fromOffset(560 * SCALE, 340 * SCALE)
+holder.Position = UDim2.new(0.5, -280 * SCALE, 0.5, -170 * SCALE)
+holder.BackgroundTransparency = 1
+holder.Visible = false
+holder.Parent = gui
+
+local win = Instance.new("CanvasGroup")
+win.AnchorPoint = Vector2.new(0.5, 0.5)
+win.Position = UDim2.fromScale(0.5, 0.5)
+win.Size = UDim2.fromOffset(560, 340)
+win.BackgroundColor3 = C.bg
+win.BorderSizePixel = 0
+win.GroupTransparency = 1
+win.Parent = holder
+corner(win, 24)
+uiScale.Parent = win
+
+local bgImage = Instance.new("ImageLabel")
+bgImage.Size = UDim2.fromScale(1, 1)
+bgImage.BackgroundTransparency = 1
+bgImage.ImageTransparency = 1
+bgImage.ScaleType = Enum.ScaleType.Crop
+bgImage.ZIndex = 1
+bgImage.Parent = win
+corner(bgImage, 24)
+
+local dim = Instance.new("Frame")
+dim.Size = UDim2.fromScale(1, 1)
+dim.BackgroundColor3 = Color3.new(0, 0, 0)
+dim.BackgroundTransparency = 1
+dim.BorderSizePixel = 0
+dim.ZIndex = 1
+dim.Parent = win
+corner(dim, 24)
+
+local function applyTheme(id)
+	bgImage.ImageTransparency = 1
+	if id then
+		bgImage.Image = "rbxthumb://type=Asset&id=" .. id .. "&w=420&h=420"
+		bgImage.ImageTransparency = 0
+		dim.BackgroundTransparency = 0.45
+	else
+		dim.BackgroundTransparency = 1
+	end
+end
+
+local function applyScale(s)
+	local dw, dh = 560 * (s - curScale) / 2, 340 * (s - curScale) / 2
+	holder.Size = UDim2.fromOffset(560 * s, 340 * s)
+	holder.Position = holder.Position - UDim2.fromOffset(dw, dh)
+	curScale = s
+	uiScale.Scale = s
+end
+
+local top = Instance.new("Frame")
+top.Size = UDim2.new(1, 0, 0, 56)
+top.BackgroundTransparency = 1
+top.ZIndex = 2
+top.Parent = win
+
+local logo = Instance.new("ImageLabel")
+logo.Size = UDim2.fromOffset(40, 40)
+logo.Position = UDim2.fromOffset(16, 8)
+logo.BackgroundTransparency = 1
+logo.Image = LOGO
+logo.ScaleType = Enum.ScaleType.Fit
+logo.Parent = top
+corner(logo, 10)
+label(top, "Aurora", 20, C.text, UDim2.fromOffset(66, 8), UDim2.fromOffset(200, 24))
+label(top, "universal script  v5", 12, C.muted, UDim2.fromOffset(66, 31), UDim2.fromOffset(200, 16))
+
+makeDraggable(top, holder, nil, function()
+	tw(uiScale, 0.15, { Scale = curScale * 0.96 })
+end, function()
+	tw(uiScale, 0.25, { Scale = curScale }, Enum.EasingStyle.Back)
+end)
+
+local sidebar = Instance.new("Frame")
+sidebar.Size = UDim2.new(0, 150, 1, -66)
+sidebar.Position = UDim2.fromOffset(10, 58)
+sidebar.BackgroundTransparency = 1
+sidebar.Parent = win
+
+local pages = Instance.new("Frame")
+pages.Size = UDim2.new(1, -180, 1, -70)
+pages.Position = UDim2.fromOffset(170, 58)
+pages.BackgroundTransparency = 1
+pages.ClipsDescendants = true
+pages.Parent = win
+
+---------------------------------------------------------------- ЕЛЕМЕНТИ
+local rowsByPane = {}
+local counters = {}
+local function nextOrder(pane)
+	counters[pane] = (counters[pane] or 0) + 1
+	return counters[pane]
+end
+
+local function card(pane, h)
+	local row = Instance.new("Frame")
+	row.BackgroundColor3 = C.side
+	row.BackgroundTransparency = 0.25
+	row.BorderSizePixel = 0
+	row.ClipsDescendants = true
+	row.Size = UDim2.new(1, -8, 0, h)
+	row.LayoutOrder = nextOrder(pane)
+	row.Parent = pane
+	corner(row, 12)
+	rowsByPane[pane] = rowsByPane[pane] or {}
+	table.insert(rowsByPane[pane], row)
+	return row
+end
+
+local function section(pane, text)
+	local l = label(pane, text, 13, C.muted, UDim2.new(), UDim2.new(1, -8, 0, 20))
+	l.LayoutOrder = nextOrder(pane)
+	return l
+end
+
+local function hitArea(row)
+	local hit = Instance.new("TextButton")
+	hit.Text = ""
+	hit.AutoButtonColor = false
+	hit.BackgroundTransparency = 1
+	hit.Size = UDim2.fromScale(1, 1)
+	hit.Parent = row
+	pressFx(hit, true, true)
+	return hit
+end
+
+local function toggle(pane, title, desc, flag, default, callback)
+	local row = card(pane, 54)
+	local state = default or false
+	Settings[flag or title] = state
+	local hit = hitArea(row)
+	label(row, title, 16, C.text, UDim2.fromOffset(12, 8), UDim2.fromOffset(300, 20))
+	label(row, desc, 12, C.muted, UDim2.fromOffset(12, 29), UDim2.fromOffset(300, 16))
+	local t = Instance.new("Frame")
+	t.AnchorPoint = Vector2.new(0.5, 0.5)
+	t.Size = UDim2.fromOffset(48, 26)
+	t.Position = UDim2.new(1, -36, 0.5, 0)
+	t.BackgroundColor3 = state and C.on or C.off
+	t.Parent = row
+	corner(t, 13)
+	local knob = Instance.new("Frame")
+	knob.Size = UDim2.fromOffset(20, 20)
+	knob.Position = UDim2.fromOffset(state and 25 or 3, 3)
+	knob.BackgroundColor3 = Color3.fromRGB(236, 233, 245)
+	knob.Parent = t
+	corner(knob, 10)
+	onAccent(function(c)
+		if state then tw(t, 0.3, { BackgroundColor3 = c }) end
+	end)
+	hit.Activated:Connect(function()
+		state = not state
+		tw(knob, 0.3, { Position = UDim2.fromOffset(state and 25 or 3, 3) }, Enum.EasingStyle.Back)
+		tw(t, 0.25, { BackgroundColor3 = state and C.on or C.off })
+		if callback then callback(state) end
+		fire(flag or title, state)
+		notify(title .. (state and ": ON" or ": OFF"))
+	end)
+	return row
+end
+
+local function dragArea(area, pane, fn, axisLock, onBegin, onEnd)
+	local hit = Instance.new("TextButton")
+	hit.Text = ""
+	hit.BackgroundTransparency = 1
+	hit.AutoButtonColor = false
+	hit.Size = UDim2.fromScale(1, 1)
+	hit.ZIndex = 4
+	hit.Parent = area
+	local drag, startPos, active, dead = nil, nil, false, false
+	local function at(p)
+		local rx = math.clamp((p.X - area.AbsolutePosition.X) / area.AbsoluteSize.X, 0, 1)
+		local ry = math.clamp((p.Y - area.AbsolutePosition.Y) / area.AbsoluteSize.Y, 0, 1)
+		fn(rx, ry)
+	end
+	local function activate()
+		active = true
+		pane.ScrollingEnabled = false
+		if onBegin then onBegin() end
+	end
+	hit.InputBegan:Connect(function(i)
+		if drag or not isPress(i) then return end
+		drag, active, dead = i, false, false
+		startPos = Vector2.new(i.Position.X, i.Position.Y)
+		if not axisLock or i.UserInputType ~= Enum.UserInputType.Touch then
+			activate()
+			at(i.Position)
+		end
+	end)
+	bind(UserInputService.InputChanged, function(i)
+		if not drag or dead then return end
+		local mine
+		if drag.UserInputType == Enum.UserInputType.Touch then
+			mine = (i == drag)
+		else
+			mine = (i.UserInputType == Enum.UserInputType.MouseMovement)
+		end
+		if not mine then return end
+		if not active then
+			local d = Vector2.new(i.Position.X, i.Position.Y) - startPos
+			if d.Magnitude < 6 then return end
+			if math.abs(d.X) > math.abs(d.Y) then
+				activate()
+			else
+				dead = true
+				return
+			end
+		end
+		at(i.Position)
+	end)
+	bind(UserInputService.InputEnded, function(i)
+		if not drag then return end
+		local mine = (i == drag)
+			or (drag.UserInputType == Enum.UserInputType.MouseButton1 and i.UserInputType == Enum.UserInputType.MouseButton1)
+		if not mine then return end
+		if not active and not dead then at(i.Position) end
+		drag = nil
+		if active then
+			active = false
+			pane.ScrollingEnabled = true
+			if onEnd then onEnd() end
+		end
+		dead = false
+	end)
+end
+
+local function slider(pane, title, desc, min, max, default, flag, callback, suffix)
+	local row = card(pane, 66)
+	suffix = suffix or ""
+	local value = default
+	Settings[flag or title] = value
+	label(row, title, 16, C.text, UDim2.fromOffset(12, 6), UDim2.fromOffset(220, 20))
+	label(row, desc, 12, C.muted, UDim2.fromOffset(12, 25), UDim2.fromOffset(300, 16))
+	local num = label(row, tostring(value) .. suffix, 16, C.text, UDim2.new(1, -112, 0, 6), UDim2.fromOffset(100, 20))
+	num.TextXAlignment = Enum.TextXAlignment.Right
+
+	local track = Instance.new("Frame")
+	track.Position = UDim2.new(0, 12, 0, 50)
+	track.Size = UDim2.new(1, -24, 0, 6)
+	track.BackgroundColor3 = C.off
+	track.Parent = row
+	corner(track, 3)
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale((value - min) / (max - min), 1)
+	fill.BackgroundColor3 = C.on
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	corner(fill, 3)
+	local knob = Instance.new("Frame")
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Size = UDim2.fromOffset(14, 14)
+	knob.Position = UDim2.fromScale(1, 0.5)
+	knob.BackgroundColor3 = Color3.fromRGB(236, 233, 245)
+	knob.Parent = fill
+	corner(knob, 7)
+	onAccent(function(c) tw(fill, 0.3, { BackgroundColor3 = c }) end)
+
+	local zone = Instance.new("Frame")
+	zone.BackgroundTransparency = 1
+	zone.Position = UDim2.new(0, 12, 0, 38)
+	zone.Size = UDim2.new(1, -24, 0, 30)
+	zone.Parent = row
+	dragArea(zone, pane, function(rel)
+		local v = math.floor(min + rel * (max - min) + 0.5)
+		fill.Size = UDim2.fromScale(rel, 1)
+		if v ~= value then
+			value = v
+			num.Text = tostring(v) .. suffix
+			if callback then callback(v) end
+			fire(flag or title, v)
+		end
+	end, true, function()
+		tw(knob, 0.15, { Size = UDim2.fromOffset(18, 18) })
+	end, function()
+		tw(knob, 0.2, { Size = UDim2.fromOffset(14, 14) }, Enum.EasingStyle.Back)
+	end)
+	return row
+end
+
+local function pill(row, text)
+	local b = Instance.new("TextButton")
+	b.Text = text
+	b.TextSize = 14
+	b.TextColor3 = C.text
+	b.Font = FONT
+	b.AutoButtonColor = false
+	b.BackgroundColor3 = C.off
+	b.AnchorPoint = Vector2.new(0.5, 0.5)
+	b.Size = UDim2.fromOffset(104, 30)
+	b.Position = UDim2.new(1, -64, 0.5, 0)
+	b.Parent = row
+	corner(b, 10)
+	pressFx(b, false)
+	return b
+end
+
+local function button(pane, title, desc, btnText, callback)
+	local row = card(pane, 54)
+	label(row, title, 16, C.text, UDim2.fromOffset(12, 8), UDim2.fromOffset(250, 20))
+	label(row, desc, 12, C.muted, UDim2.fromOffset(12, 29), UDim2.fromOffset(250, 16))
+	local b = pill(row, btnText)
+	onAccent(function(c) tw(b, 0.3, { BackgroundColor3 = c }) end)
+	b.BackgroundColor3 = C.on
+	b.Activated:Connect(function()
+		if callback then callback() end
+	end)
+	return row
+end
+
+local function selector(pane, title, desc, options, default, flag, callback)
+	local row = card(pane, 54)
+	local idx = default or 1
+	Settings[flag or title] = options[idx]
+	label(row, title, 16, C.text, UDim2.fromOffset(12, 8), UDim2.fromOffset(250, 20))
+	label(row, desc, 12, C.muted, UDim2.fromOffset(12, 29), UDim2.fromOffset(250, 16))
+	local b = pill(row, options[idx])
+	b.Activated:Connect(function()
+		idx = idx % #options + 1
+		b.Text = options[idx]
+		if callback then callback(options[idx]) end
+		fire(flag or title, options[idx])
+		notify(title .. ": " .. options[idx])
+	end)
+	return row
+end
+
+local function grid(pane, size)
+	size = size or 54
+	local g = Instance.new("Frame")
+	g.BackgroundTransparency = 1
+	g.AutomaticSize = Enum.AutomaticSize.Y
+	g.Size = UDim2.new(1, -8, 0, 0)
+	g.LayoutOrder = nextOrder(pane)
+	g.Parent = pane
+	local l = Instance.new("UIGridLayout")
+	l.CellSize = UDim2.fromOffset(size, size)
+	l.CellPadding = UDim2.fromOffset(6, 6)
+	l.SortOrder = Enum.SortOrder.LayoutOrder
+	l.Parent = g
+	return g
+end
+
+local function cellButton(g, order, size)
+	local wrap = Instance.new("Frame")
+	wrap.BackgroundTransparency = 1
+	wrap.LayoutOrder = order
+	wrap.Parent = g
+	local b = Instance.new("TextButton")
+	b.Text = ""
+	b.AutoButtonColor = false
+	b.AnchorPoint = Vector2.new(0.5, 0.5)
+	b.Position = UDim2.fromScale(0.5, 0.5)
+	b.Size = UDim2.fromScale(1, 1)
+	b.BackgroundColor3 = C.side
+	b.Parent = wrap
+	corner(b, (size or 54) / 2)
+	pressFx(b, false)
+	return b
+end
 
 
---=====================================================================
--- ЧАСТИНА 1 — модуль крил (вставити перед "ВКЛАДКИ (вміст)")
---=====================================================================
 ---------------------------------------------------------------- ANGEL WINGS (багатошарові крила + ефекти)
 local AngelWings = {}
 do
@@ -580,31 +1191,894 @@ do
 	end
 end
 
+---------------------------------------------------------------- CHINESE HAT (конічний бамбуковий капелюх)
+local ChineseHat = {}
+do
+	local CYL = CFrame.Angles(0, 0, math.pi / 2) -- вісь циліндра: X -> Y
+	local BLACK, WHITE = Color3.new(0, 0, 0), Color3.new(1, 1, 1)
 
---=====================================================================
--- ЧАСТИНА 2 — вставити в КІНЕЦЬ buildFun (перед її "end")
---=====================================================================
-	section(pane, "Angel Wings")
-	toggle(pane, "Angel Wings", "Layered angel wings (only you see them)", "AW_Wings", false, AngelWings.setWings)
-	selector(pane, "Angel color", "Feather color scheme", { "White", "Gold", "Black", "Ice", "Fire", "Pink" }, 1, "AW_Color", AngelWings.setColor)
-	selector(pane, "Angel size", "Wing scale", { "Mini", "Medium", "Large", "Huge" }, 2, "AW_Size", AngelWings.setSize)
-	selector(pane, "Angel pose", "Spread or folded", { "Spread", "Folded" }, 1, "AW_Pose", function(v)
+	local STYLES = {
+		{ name = "Straw",  base = Color3.fromRGB(226,196,128), alt = Color3.fromRGB(204,170,100), rib = Color3.fromRGB(168,128,66),  trim = Color3.fromRGB(120,80,42),   strap = Color3.fromRGB(176,38,38),  knob = Color3.fromRGB(110,72,36),   mat = Enum.Material.Fabric },
+		{ name = "Bamboo", base = Color3.fromRGB(160,176,92),  alt = Color3.fromRGB(134,152,74),  rib = Color3.fromRGB(96,112,48),   trim = Color3.fromRGB(70,84,36),    strap = Color3.fromRGB(190,60,50),  knob = Color3.fromRGB(80,64,32),    mat = Enum.Material.Fabric },
+		{ name = "Black",  base = Color3.fromRGB(30,30,36),    alt = Color3.fromRGB(46,46,54),    rib = Color3.fromRGB(212,172,70),  trim = Color3.fromRGB(212,172,70),  strap = Color3.fromRGB(170,30,38),  knob = Color3.fromRGB(212,172,70),  mat = Enum.Material.SmoothPlastic },
+		{ name = "Red",    base = Color3.fromRGB(176,32,40),   alt = Color3.fromRGB(148,22,32),   rib = Color3.fromRGB(238,200,100), trim = Color3.fromRGB(238,200,100), strap = Color3.fromRGB(245,205,90),  knob = Color3.fromRGB(245,205,90),  mat = Enum.Material.SmoothPlastic },
+		{ name = "Gold",   base = Color3.fromRGB(236,196,84),  alt = Color3.fromRGB(210,164,56),  rib = Color3.fromRGB(255,238,160), trim = Color3.fromRGB(150,102,32),  strap = Color3.fromRGB(176,38,38),  knob = Color3.fromRGB(255,240,170), mat = Enum.Material.SmoothPlastic },
+		{ name = "Jade",   base = Color3.fromRGB(112,196,164), alt = Color3.fromRGB(84,166,136),  rib = Color3.fromRGB(236,214,150), trim = Color3.fromRGB(236,214,150), strap = Color3.fromRGB(200,60,60),  knob = Color3.fromRGB(236,214,150), mat = Enum.Material.SmoothPlastic },
+		{ name = "Accent", dyn = true },
+	}
+	local SIZES = { { "Small", 0.8 }, { "Medium", 1 }, { "Large", 1.25 }, { "Huge", 1.6 } }
+	local TILTS = { Straight = { 0, 0 }, Back = { 0.2, 0 }, Forward = { -0.17, 0 }, Side = { 0, 0.2 } }
+
+	local state = {
+		on = false, style = 1, size = 2, tilt = "Straight",
+		strap = true, weave = true, bands = true, glow = false, sway = true,
+	}
+
+	local folder, root, rootWeld, light, head, char
+	local recs, tassels = {}, {}
+	local baseC0 = CFrame.new()
+	local dead = false
+
+	local function getStyle()
+		local s = STYLES[state.style]
+		if s.dyn then
+			local c = C.on
+			return {
+				base = c:Lerp(WHITE, 0.25), alt = c, rib = c:Lerp(WHITE, 0.75),
+				trim = c:Lerp(WHITE, 0.6), strap = c:Lerp(BLACK, 0.35), knob = c:Lerp(WHITE, 0.8),
+				mat = Enum.Material.SmoothPlastic,
+			}
+		end
+		return s
+	end
+
+	local function paint()
+		local s = getStyle()
+		for _, r in ipairs(recs) do
+			local k, p = r.kind, r.part
+			if k == "base" then
+				p.Color, p.Material = s.base, s.mat
+			elseif k == "alt" then
+				p.Color, p.Material = s.alt, s.mat
+			elseif k == "lining" then
+				p.Color, p.Material = s.base:Lerp(BLACK, 0.5), s.mat
+			elseif k == "rib" then
+				p.Color = s.rib
+				p.Material = state.glow and Enum.Material.Neon or s.mat
+			elseif k == "trim" then
+				p.Color = s.trim
+				p.Material = state.glow and Enum.Material.Neon or Enum.Material.SmoothPlastic
+			elseif k == "knob" then
+				p.Color = s.knob
+				p.Material = state.glow and Enum.Material.Neon or Enum.Material.SmoothPlastic
+			elseif k == "strap" then
+				p.Color, p.Material = s.strap, Enum.Material.Fabric
+			end
+		end
+		if light then
+			light.Color = s.trim
+			light.Enabled = state.glow
+		end
+	end
+
+	local function clear()
+		if folder then folder:Destroy() end
+		folder, root, rootWeld, light = nil, nil, nil, nil
+		recs, tassels = {}, {}
+	end
+
+	local function build()
+		clear()
+		char = lp.Character
+		head = char and char:FindFirstChild("Head")
+		if not head then return end
+		local hs = head.Size
+		local S = SIZES[state.size][2]
+
+		folder = Instance.new("Folder")
+		folder.Name = "ChineseHat"
+
+		root = Instance.new("Part")
+		root.Size = Vector3.new(0.2, 0.2, 0.2)
+		root.Transparency = 1
+		root.Massless = true
+		root.CanCollide = false
+		root.CanTouch = false
+		root.CanQuery = false
+		root.CastShadow = false
+		root.CFrame = head.CFrame
+		root.Parent = folder
+
+		-- центр крайки капелюха трохи нижче верху голови
+		local drop = 0.22 * hs.Y
+		baseC0 = CFrame.new(0, hs.Y / 2 - drop, 0)
+		rootWeld = Instance.new("Weld")
+		rootWeld.Part0 = head
+		rootWeld.Part1 = root
+		rootWeld.C0 = baseC0
+		rootWeld.Parent = root
+
+		local function mk(kind, shape, size, cf)
+			local p = Instance.new("Part")
+			p.Shape = shape
+			p.Size = size
+			p.Massless = true
+			p.CanCollide = false
+			p.CanTouch = false
+			p.CanQuery = false
+			p.CastShadow = false
+			p.TopSurface = Enum.SurfaceType.Smooth
+			p.BottomSurface = Enum.SurfaceType.Smooth
+			p.CFrame = head.CFrame
+			p.Parent = folder
+			local w = Instance.new("Weld")
+			w.Part0 = root
+			w.Part1 = p
+			w.C0 = cf
+			w.Parent = p
+			recs[#recs + 1] = { part = p, weld = w, kind = kind }
+			return p, w
+		end
+
+		local R, H, N, pw = 1.85 * S, 1.3 * S, 30, 1.1
+		local function prof(t) return R * (1 - t) ^ pw end
+		local Cyl, Blk, Ball = Enum.PartType.Cylinder, Enum.PartType.Block, Enum.PartType.Ball
+
+		-- 1) конус: стопка тонких дисків, чергування кольору = кільця плетіння
+		for i = 1, N do
+			local t0, t1 = (i - 1) / N, i / N
+			local r = math.max(prof(t0), 0.03)
+			local th = H / N * 1.12
+			mk(i % 2 == 0 and "alt" or "base", Cyl,
+				Vector3.new(th, r * 2, r * 2),
+				CFrame.new(0, (t0 + t1) / 2 * H, 0) * CYL)
+		end
+
+		-- 2) підкладка знизу та обідок крайки
+		mk("lining", Cyl, Vector3.new(0.03, R * 1.94, R * 1.94), CFrame.new(0, -0.05, 0) * CYL)
+		mk("trim", Cyl, Vector3.new(0.09 * S + 0.02, R * 2 + 0.1, R * 2 + 0.1), CFrame.new(0, 0, 0) * CYL)
+
+		-- 3) ребра (спиці) вздовж поверхні конуса, 3 сегменти кожне
+		if state.weave then
+			local nR = 16
+			local pts = { 0.01, 0.36, 0.68, 0.985 }
+			for k = 1, nR do
+				local a = (k - 1) / nR * math.pi * 2 + 0.1
+				for s = 1, #pts - 1 do
+					local ta, tb = pts[s], pts[s + 1]
+					local ra, rb = prof(ta) + 0.03 * S, prof(tb) + 0.03 * S
+					local ha, hb = ta * H, tb * H
+					local dr, dh = ra - rb, hb - ha
+					local L = math.sqrt(dr * dr + dh * dh)
+					local phi = math.atan2(dr, dh)
+					mk("rib", Blk, Vector3.new(0.045 * S, L + 0.02, 0.045 * S),
+						CFrame.Angles(0, a, 0) * CFrame.new((ra + rb) / 2, (ha + hb) / 2, 0) * CFrame.Angles(0, 0, phi))
+				end
+			end
+		end
+
+		-- 4) декоративні пояски
+		if state.bands then
+			for _, tb in ipairs({ 0.28, 0.6 }) do
+				local r = prof(tb) + 0.05 * S
+				mk("trim", Cyl, Vector3.new(0.07 * S, r * 2, r * 2), CFrame.new(0, tb * H, 0) * CYL)
+			end
+		end
+
+		-- 5) верхівка: стебло + кулька
+		mk("knob", Cyl, Vector3.new(0.14 * S, 0.1 * S, 0.1 * S), CFrame.new(0, H - 0.01, 0) * CYL)
+		mk("knob", Ball, Vector3.new(0.26 * S, 0.26 * S, 0.26 * S), CFrame.new(0, H + 0.07 * S, 0))
+
+		-- 6) підборідний ремінець з бантом і двома китицями
+		if state.strap then
+			local chinY = -(hs.Y - drop) - 0.03
+			local sx = hs.X / 2 + 0.04
+			local zf = -hs.Z * 0.15
+			local len = -0.02 - chinY
+			for _, sgn in ipairs({ 1, -1 }) do
+				mk("strap", Blk, Vector3.new(0.06, len, 0.12), CFrame.new(sgn * sx, (-0.02 + chinY) / 2, 0))
+			end
+			mk("strap", Blk, Vector3.new(hs.X + 0.14, 0.06, 0.1), CFrame.new(0, chinY, zf))
+			mk("strap", Ball, Vector3.new(0.14, 0.14, 0.14), CFrame.new(0, chinY, zf - 0.04))
+			for idx, sgn in ipairs({ 1, -1 }) do
+				local anchor = Vector3.new(sgn * sx, chinY, zf)
+				local body = mk("strap", Blk, Vector3.new(0.07, 0.4, 0.07), CFrame.new(anchor))
+				local bead = mk("knob", Ball, Vector3.new(0.14, 0.14, 0.14), CFrame.new(anchor))
+				tassels[#tassels + 1] = {
+					body = body, bead = bead, anchor = anchor, ph = idx * 1.9,
+					bw = recs[#recs - 1].weld, ew = recs[#recs].weld,
+				}
+			end
+		end
+
+		light = Instance.new("PointLight")
+		light.Range = 10
+		light.Brightness = 1.2
+		light.Shadows = false
+		light.Parent = root
+
+		paint()
+		folder.Parent = state.on and char or nil
+	end
+
+	-- анімація: пружини для нахилу від руху, колихання китиць
+	local clock = 0
+	local pitch, roll, yo, pv, rv, yv = 0, 0, 0, 0, 0, 0
+	local function spring(a, v, target, dt)
+		v += ((target - a) * 70 - v * 9) * dt
+		a += v * dt
+		return a, v
+	end
+
+	bind(RunService.RenderStepped, function(dt)
+		if dead or not folder or not folder.Parent or not rootWeld then return end
+		if not head or not head.Parent then return end
+		dt = math.min(dt, 1 / 30)
+		clock += dt
+
+		local tp, tr, ty = 0, 0, 0
+		if state.sway then
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				local lv = hrp.CFrame:VectorToObjectSpace(hrp.AssemblyLinearVelocity)
+				tp = math.clamp(-lv.Z * 0.009, -0.22, 0.22)
+				tr = math.clamp(lv.X * 0.009, -0.22, 0.22)
+				ty = math.clamp(lv.Y * 0.0035, -0.08, 0.1)
+			end
+		end
+		pitch, pv = spring(pitch, pv, tp, dt)
+		roll, rv = spring(roll, rv, tr, dt)
+		yo, yv = spring(yo, yv, ty, dt)
+
+		local idle = state.sway and math.sin(clock * 1.3) * 0.012 or 0
+		local tilt = TILTS[state.tilt] or TILTS.Straight
+		rootWeld.C0 = baseC0 * CFrame.new(0, yo, 0)
+			* CFrame.Angles(pitch + tilt[1] + idle * 0.6, 0, roll + tilt[2] + idle)
+
+		local k = state.sway and 1 or 0.3
+		for _, ts in ipairs(tassels) do
+			local ax = -2.4 * pitch + math.sin(clock * 2 + ts.ph) * 0.06 * k
+			local az = -2.4 * roll + math.sin(clock * 1.7 + ts.ph * 1.3) * 0.05 * k
+			local pivot = CFrame.new(ts.anchor) * CFrame.Angles(ax, 0, az)
+			ts.bw.C0 = pivot * CFrame.new(0, -0.2, 0)
+			ts.ew.C0 = pivot * CFrame.new(0, -0.43, 0)
+		end
+	end)
+
+	bind(lp.CharacterAdded, function(c)
+		clear()
+		if not state.on then return end
+		task.spawn(function()
+			c:WaitForChild("Head", 5)
+			c:WaitForChild("HumanoidRootPart", 5)
+			task.wait(0.4)
+			if dead or lp.Character ~= c then return end
+			build()
+		end)
+	end)
+
+	-- перефарбувати при зміні акценту, якщо стиль Accent
+	onAccent(function()
+		if folder and STYLES[state.style].dyn then paint() end
+	end)
+
+	-- API для меню
+	function ChineseHat.setEnabled(on)
+		state.on = on
+		if on and not folder then build() end
+		if folder then folder.Parent = on and char or nil end
+	end
+	function ChineseHat.setStyle(name)
+		for i, s in ipairs(STYLES) do
+			if s.name == name then state.style = i end
+		end
+		paint()
+	end
+	function ChineseHat.setSize(name)
+		for i, s in ipairs(SIZES) do
+			if s[1] == name then state.size = i end
+		end
+		if folder then build() end
+	end
+	function ChineseHat.setTilt(name) state.tilt = name end
+	function ChineseHat.setStrap(on) state.strap = on; if folder then build() end end
+	function ChineseHat.setWeave(on) state.weave = on; if folder then build() end end
+	function ChineseHat.setBands(on) state.bands = on; if folder then build() end end
+	function ChineseHat.setGlow(on) state.glow = on; paint() end
+	function ChineseHat.setSway(on) state.sway = on end
+	function ChineseHat.cleanup()
+		dead = true
+		clear()
+	end
+end
+
+---------------------------------------------------------------- ВКЛАДКИ (вміст)
+local statsLabel
+local fps = 60
+local isOpen = true
+local setOpen
+
+local function buildMain(pane)
+	local row = card(pane, 84)
+	local av = Instance.new("ImageLabel")
+	av.Size = UDim2.fromOffset(60, 60)
+	av.Position = UDim2.fromOffset(12, 12)
+	av.BackgroundColor3 = C.off
+	av.Parent = row
+	corner(av, 30)
+	task.spawn(function()
+		local ok, img = pcall(function()
+			return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+		end)
+		if ok and av.Parent then av.Image = img end
+	end)
+	label(row, lp.DisplayName, 18, C.text, UDim2.fromOffset(84, 10), UDim2.new(1, -96, 0, 22))
+	label(row, "@" .. lp.Name, 12, C.muted, UDim2.fromOffset(84, 33), UDim2.new(1, -96, 0, 16))
+	statsLabel = label(row, "FPS --  |  Ping -- ms", 12, C.on, UDim2.fromOffset(84, 55), UDim2.new(1, -96, 0, 16))
+	onAccent(function(c) statsLabel.TextColor3 = c end)
+
+	section(pane, "Quick actions")
+	button(pane, "Hide menu", "Hotkey: RightShift", "Hide", function()
+		isOpen = false
+		setOpen(false)
+	end)
+	button(pane, "Test toast", "Show a notification", "Test", function()
+		notify("Aurora is working!")
+	end)
+end
+
+local function buildCombat(pane)
+	section(pane, "Assist")
+	toggle(pane, "Aim Assist", "Helps you aim at targets", "Aim Assist", false)
+	toggle(pane, "Auto Clicker", "Clicks automatically", "Auto Clicker", false)
+	section(pane, "Values")
+	slider(pane, "Reach", "Adjust attack distance", 1, 20, 5, "Reach")
+	slider(pane, "FOV", "Aim field of view", 10, 120, 60, "FOV", nil, "°")
+	selector(pane, "Target", "Who to focus on", { "Closest", "Lowest HP", "Random" }, 1, "Target")
+end
+
+local function buildPlayer(pane)
+	section(pane, "Movement")
+	toggle(pane, "Option 1", "Опис", "P1", false)
+	toggle(pane, "Option 2", "Опис", "P2", false)
+	slider(pane, "Speed", "Walk speed multiplier", 1, 10, 1, "Speed", nil, "x")
+end
+
+local function buildFun(pane)
+	-- група: перемикач + шестерня, що розкриває компактні налаштування
+	local function group(title, desc, flag, cb)
+		local main = toggle(pane, title, desc, flag, false, cb)
+
+		local gear = Instance.new("TextButton")
+		gear.Text = "⚙"
+		gear.TextSize = 22
+		gear.TextColor3 = C.text
+		gear.Font = Enum.Font.SourceSansBold
+		gear.AutoButtonColor = false
+		gear.BackgroundColor3 = C.off
+		gear.AnchorPoint = Vector2.new(0.5, 0.5)
+		gear.Size = UDim2.fromOffset(30, 30)
+		gear.Position = UDim2.new(1, -92, 0.5, 0)
+		gear.ZIndex = 5
+		gear.Parent = main
+		corner(gear, 10)
+		pressFx(gear, false)
+
+		local opts = {}
+		local function miniRow(name)
+			local row = card(pane, 34)
+			row.Visible = false
+			opts[#opts + 1] = row
+			label(row, name, 15, C.text, UDim2.fromOffset(12, 7), UDim2.fromOffset(170, 20))
+			return row
+		end
+
+		local function mtoggle(name, f, default, callback)
+			local row = miniRow(name)
+			local on = default
+			Settings[f] = on
+			local hit = hitArea(row)
+			local t = Instance.new("Frame")
+			t.AnchorPoint = Vector2.new(0.5, 0.5)
+			t.Size = UDim2.fromOffset(40, 22)
+			t.Position = UDim2.new(1, -32, 0.5, 0)
+			t.BackgroundColor3 = on and C.on or C.off
+			t.Parent = row
+			corner(t, 11)
+			local knob = Instance.new("Frame")
+			knob.Size = UDim2.fromOffset(16, 16)
+			knob.Position = UDim2.fromOffset(on and 21 or 3, 3)
+			knob.BackgroundColor3 = Color3.fromRGB(236, 233, 245)
+			knob.Parent = t
+			corner(knob, 8)
+			onAccent(function(c)
+				if on then tw(t, 0.3, { BackgroundColor3 = c }) end
+			end)
+			hit.Activated:Connect(function()
+				on = not on
+				tw(knob, 0.25, { Position = UDim2.fromOffset(on and 21 or 3, 3) }, Enum.EasingStyle.Back)
+				tw(t, 0.2, { BackgroundColor3 = on and C.on or C.off })
+				if callback then callback(on) end
+				fire(f, on)
+			end)
+		end
+
+		local function mselect(name, f, options, callback)
+			local row = miniRow(name)
+			local idx = 1
+			Settings[f] = options[1]
+			local b = pill(row, options[1])
+			b.Size = UDim2.fromOffset(92, 26)
+			b.Position = UDim2.new(1, -56, 0.5, 0)
+			b.TextSize = 13
+			b.Activated:Connect(function()
+				idx = idx % #options + 1
+				b.Text = options[idx]
+				if callback then callback(options[idx]) end
+				fire(f, options[idx])
+			end)
+		end
+
+		local open = false
+		gear.Activated:Connect(function()
+			open = not open
+			for _, r in ipairs(opts) do r.Visible = open end
+			tw(gear, 0.35, { Rotation = open and 90 or 0, BackgroundColor3 = open and C.on or C.off }, Enum.EasingStyle.Back)
+		end)
+		onAccent(function(c)
+			if open then gear.BackgroundColor3 = c end
+		end)
+
+		return mtoggle, mselect
+	end
+
+	section(pane, "Wings")
+	local wt, ws = group("Angel Wings", "Only you see them", "AW_Wings", AngelWings.setWings)
+	ws("Color", "AW_Color", { "White", "Gold", "Black", "Ice", "Fire", "Pink" }, AngelWings.setColor)
+	ws("Size", "AW_Size", { "Medium", "Large", "Huge", "Mini" }, AngelWings.setSize)
+	ws("Pose", "AW_Pose", { "Spread", "Folded" }, function(v)
 		AngelWings.setFold(v == "Folded")
 	end)
-	toggle(pane, "Angel flap", "Wing animation", "AW_Anim", true, AngelWings.setAnim)
-	toggle(pane, "Angel glow", "Neon feathers", "AW_Glow", false, AngelWings.setGlow)
-	toggle(pane, "Angel sparkles", "Golden sparks on feathers", "AW_Sparkles", true, AngelWings.setSparkles)
-	toggle(pane, "Falling feathers", "Feathers drift down", "AW_Feathers", true, AngelWings.setFeathers)
-	toggle(pane, "Angel trails", "Glowing wing-tip trails", "AW_Trails", true, AngelWings.setTrails)
-	toggle(pane, "Angel aura", "Light cast on surroundings", "AW_Aura", true, AngelWings.setAura)
-	toggle(pane, "Angel halo", "Floating golden ring", "AW_Halo", false, AngelWings.setHalo)
+	wt("Flap", "AW_Anim", true, AngelWings.setAnim)
+	wt("Glow", "AW_Glow", false, AngelWings.setGlow)
+	wt("Sparkles", "AW_Sparkles", true, AngelWings.setSparkles)
+	wt("Falling feathers", "AW_Feathers", true, AngelWings.setFeathers)
+	wt("Trails", "AW_Trails", true, AngelWings.setTrails)
+	wt("Aura", "AW_Aura", true, AngelWings.setAura)
+	wt("Halo", "AW_Halo", false, AngelWings.setHalo)
 
+	section(pane, "Hat")
+	local ht, hsel = group("Chinese Hat", "Conical woven hat", "CH_On", ChineseHat.setEnabled)
+	hsel("Style", "CH_Style", { "Straw", "Bamboo", "Black", "Red", "Gold", "Jade", "Accent" }, ChineseHat.setStyle)
+	hsel("Size", "CH_Size", { "Medium", "Large", "Huge", "Small" }, ChineseHat.setSize)
+	hsel("Tilt", "CH_Tilt", { "Straight", "Back", "Forward", "Side" }, ChineseHat.setTilt)
+	ht("Chin strap", "CH_Strap", true, ChineseHat.setStrap)
+	ht("Weave ribs", "CH_Weave", true, ChineseHat.setWeave)
+	ht("Bands", "CH_Bands", true, ChineseHat.setBands)
+	ht("Glow", "CH_Glow", false, ChineseHat.setGlow)
+	ht("Sway", "CH_Sway", true, ChineseHat.setSway)
+end
 
---=====================================================================
--- ЧАСТИНА 3 — Unload: додати ПЕРШИМ рядком у callback кнопки
---=====================================================================
+local function buildMisc(pane)
+	section(pane, "Themes")
+	local g = grid(pane)
+	local cells = {}
+	local function choose(key, id, text)
+		for k, c in pairs(cells) do c.Enabled = (k == key) end
+		applyTheme(id)
+		notify(id and ("Theme " .. text) or "No background")
+	end
+	local entries = { { "none", nil, "X" } }
+	for n, id in ipairs(THEMES) do
+		table.insert(entries, { id, id, tostring(n) })
+	end
+	for idx, e in ipairs(entries) do
+		local key, id, text = e[1], e[2], e[3]
+		local cell = cellButton(g, idx)
+		local st = Instance.new("UIStroke")
+		st.Color = C.on
+		st.Thickness = 2
+		st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		st.Enabled = (key == (THEMES[1] or "none"))
+		st.Parent = cell
+		cells[key] = st
+		onAccent(function(c) st.Color = c end)
+		if id then
+			local img = Instance.new("ImageLabel")
+			img.Size = UDim2.fromScale(1, 1)
+			img.BackgroundTransparency = 1
+			img.Image = "rbxthumb://type=Asset&id=" .. id .. "&w=420&h=420"
+			img.ScaleType = Enum.ScaleType.Crop
+			img.Parent = cell
+			corner(img, 27)
+		else
+			local mk = Instance.new("TextLabel")
+			mk.Size = UDim2.fromScale(1, 1)
+			mk.BackgroundTransparency = 1
+			mk.Text = "X"
+			mk.TextColor3 = C.text
+			mk.TextSize = 18
+			mk.Font = FONT
+			mk.Parent = cell
+		end
+		cell.Activated:Connect(function() choose(key, id, text) end)
+	end
+
+	local pc
+	toggle(pane, "Color palette", "Pick any accent color", "Palette", false, function(on)
+		if pc then pc.Visible = on end
+	end)
+	pc = card(pane, 156)
+	pc.Visible = false
+	local hh, ss, vv = C.on:ToHSV()
+
+	local svBox = Instance.new("Frame")
+	svBox.Position = UDim2.fromOffset(12, 12)
+	svBox.Size = UDim2.new(1, -24, 0, 96)
+	svBox.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
+	svBox.BorderSizePixel = 0
+	svBox.ClipsDescendants = true
+	svBox.Parent = pc
+	corner(svBox, 10)
+	local white = Instance.new("Frame")
+	white.Size = UDim2.fromScale(1, 1)
+	white.BackgroundColor3 = Color3.new(1, 1, 1)
+	white.BorderSizePixel = 0
+	white.Parent = svBox
+	local wg = Instance.new("UIGradient")
+	wg.Transparency = NumberSequence.new(0, 1)
+	wg.Parent = white
+	local black = Instance.new("Frame")
+	black.Size = UDim2.fromScale(1, 1)
+	black.BackgroundColor3 = Color3.new(0, 0, 0)
+	black.BorderSizePixel = 0
+	black.Parent = svBox
+	local bg2 = Instance.new("UIGradient")
+	bg2.Rotation = 90
+	bg2.Transparency = NumberSequence.new(1, 0)
+	bg2.Parent = black
+	local cur = Instance.new("Frame")
+	cur.AnchorPoint = Vector2.new(0.5, 0.5)
+	cur.Size = UDim2.fromOffset(14, 14)
+	cur.BackgroundTransparency = 1
+	cur.ZIndex = 3
+	cur.Parent = svBox
+	corner(cur, 7)
+	local curStroke = Instance.new("UIStroke")
+	curStroke.Color = Color3.new(1, 1, 1)
+	curStroke.Thickness = 2
+	curStroke.Parent = cur
+
+	local hueBar = Instance.new("Frame")
+	hueBar.Position = UDim2.fromOffset(12, 122)
+	hueBar.Size = UDim2.new(1, -64, 0, 16)
+	hueBar.BackgroundColor3 = Color3.new(1, 1, 1)
+	hueBar.BorderSizePixel = 0
+	hueBar.Parent = pc
+	corner(hueBar, 8)
+	local hg = Instance.new("UIGradient")
+	do
+		local keys = {}
+		for i = 0, 6 do
+			table.insert(keys, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(math.min(i / 6, 0.999), 1, 1)))
+		end
+		hg.Color = ColorSequence.new(keys)
+	end
+	hg.Parent = hueBar
+	local hKnob = Instance.new("Frame")
+	hKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+	hKnob.Size = UDim2.fromOffset(8, 22)
+	hKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+	hKnob.ZIndex = 3
+	hKnob.Parent = hueBar
+	corner(hKnob, 4)
+
+	local preview = Instance.new("Frame")
+	preview.AnchorPoint = Vector2.new(1, 0)
+	preview.Position = UDim2.new(1, -12, 0, 118)
+	preview.Size = UDim2.fromOffset(32, 24)
+	preview.BackgroundColor3 = C.on
+	preview.Parent = pc
+	corner(preview, 8)
+
+	local function refresh()
+		svBox.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
+		cur.Position = UDim2.fromScale(ss, 1 - vv)
+		hKnob.Position = UDim2.fromScale(hh, 0.5)
+		preview.BackgroundColor3 = Color3.fromHSV(hh, ss, vv)
+	end
+	refresh()
+
+	local function apply()
+		refresh()
+		setAccent(Color3.fromHSV(hh, ss, vv))
+	end
+
+	dragArea(svBox, pane, function(rx, ry)
+		ss, vv = rx, 1 - ry
+		apply()
+	end)
+	dragArea(hueBar, pane, function(rx)
+		hh = math.min(rx, 0.999)
+		apply()
+	end, true)
+
+	section(pane, "General")
+	toggle(pane, "Notifications", "Small toast at the top", "Notify", true, function(on)
+		flags.notify = on
+	end)
+
+	section(pane, "Interface")
+	slider(pane, "Menu size", "Scale of the window", 50, 110, math.floor(SCALE * 100), "MenuSize", function(v)
+		applyScale(v / 100)
+	end, "%")
 	button(pane, "Unload", "Remove the menu completely", "Unload", function()
-		AngelWings.cleanup()   -- <<< новий рядок
-		wingsClear()
-		haloClear()
-		...
+		AngelWings.cleanup()
+		ChineseHat.cleanup()
+		for _, c in ipairs(conns) do c:Disconnect() end
+		gui:Destroy()
+	end)
+end
+
+---------------------------------------------------------------- ВКЛАДКИ (каркас)
+local tabs = {
+	{ "Main", "Main", buildMain },
+	{ "Combat", "Combat Settings", buildCombat },
+	{ "Player", "Player Settings", buildPlayer },
+	{ "Fun", "Fun", buildFun },
+	{ "Misc", "Misc", buildMisc },
+}
+
+local buttons, bars, panes, scrolls = {}, {}, {}, {}
+local current = nil
+
+local function selectTab(name)
+	if current == name then return end
+	current = name
+	for n, b in pairs(buttons) do
+		local sel = (n == name)
+		tw(b, 0.25, { BackgroundTransparency = sel and 0 or 1 })
+		tw(bars[n], 0.25, { BackgroundTransparency = sel and 0 or 1 })
+	end
+	for n, p in pairs(panes) do
+		if n ~= name then p.Visible = false end
+	end
+	local p = panes[name]
+	p.Visible = true
+	p.Position = UDim2.fromOffset(16, 0)
+	tw(p, 0.35, { Position = UDim2.fromOffset(0, 0) })
+	scrolls[name].CanvasPosition = Vector2.zero
+
+	for idx, row in ipairs(rowsByPane[scrolls[name]] or {}) do
+		row.BackgroundTransparency = 1
+		task.delay(0.05 + math.min(idx, 10) * 0.05, function()
+			tw(row, 0.35, { BackgroundTransparency = 0.25 })
+		end)
+	end
+end
+
+for i, tab in ipairs(tabs) do
+	local name, title, builder = tab[1], tab[2], tab[3]
+
+	local b = Instance.new("TextButton")
+	b.Text = "     " .. name
+	b.TextSize = 16
+	b.Font = FONT
+	b.TextColor3 = C.text
+	b.TextXAlignment = Enum.TextXAlignment.Left
+	b.AutoButtonColor = false
+	b.BackgroundColor3 = C.side
+	b.BackgroundTransparency = 1
+	b.AnchorPoint = Vector2.new(0.5, 0.5)
+	b.Size = UDim2.new(1, 0, 0, 42)
+	b.Position = UDim2.new(0.5, 0, 0, (i - 1) * 48 + 21)
+	b.Parent = sidebar
+	corner(b, 14)
+	pressFx(b, true)
+	buttons[name] = b
+
+	local bar = Instance.new("Frame")
+	bar.Size = UDim2.fromOffset(4, 20)
+	bar.Position = UDim2.new(0, 8, 0.5, -10)
+	bar.BackgroundColor3 = C.on
+	bar.BackgroundTransparency = 1
+	bar.BorderSizePixel = 0
+	bar.ZIndex = 6
+	bar.Parent = b
+	corner(bar, 2)
+	bars[name] = bar
+	onAccent(function(c) bar.BackgroundColor3 = c end)
+
+	b.MouseButton1Click:Connect(function() selectTab(name) end)
+	b.MouseEnter:Connect(function()
+		if current ~= name then tw(b, 0.2, { BackgroundTransparency = 0.6 }) end
+	end)
+	b.MouseLeave:Connect(function()
+		if current ~= name then tw(b, 0.2, { BackgroundTransparency = 1 }) end
+	end)
+
+	local p = Instance.new("Frame")
+	p.Size = UDim2.fromScale(1, 1)
+	p.BackgroundTransparency = 1
+	p.ClipsDescendants = true
+	p.Visible = false
+	p.Parent = pages
+	panes[name] = p
+
+	local sc = Instance.new("ScrollingFrame")
+	sc.Size = UDim2.fromScale(1, 1)
+	sc.BackgroundTransparency = 1
+	sc.BorderSizePixel = 0
+	sc.ScrollBarThickness = 4
+	sc.ElasticBehavior = Enum.ElasticBehavior.Always
+	sc.VerticalScrollBarInset = Enum.ScrollBarInset.None
+	sc.ScrollBarImageColor3 = C.on
+	sc.CanvasSize = UDim2.new()
+	sc.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	sc.ScrollingDirection = Enum.ScrollingDirection.Y
+	sc.Parent = p
+	scrolls[name] = sc
+	onAccent(function(c) sc.ScrollBarImageColor3 = c end)
+
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 6)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = sc
+	local pad = Instance.new("UIPadding")
+	pad.PaddingBottom = UDim.new(0, 16)
+	pad.Parent = sc
+
+	local head = label(sc, title, 19, C.text, UDim2.new(), UDim2.new(1, -8, 0, 28))
+	head.LayoutOrder = nextOrder(sc)
+
+	local okB, errB = pcall(builder, sc)
+	if not okB then
+		warn("[Aurora] помилка у вкладці " .. name .. ": " .. tostring(errB))
+	end
+end
+
+---------------------------------------------------------------- КНОПКА ЗГОРТАННЯ
+local minBtn = Instance.new("TextButton")
+minBtn.Text = "-"
+minBtn.TextSize = 22
+minBtn.TextColor3 = C.text
+minBtn.Font = FONT
+minBtn.AutoButtonColor = false
+minBtn.BackgroundColor3 = C.side
+minBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+minBtn.Size = UDim2.fromOffset(32, 32)
+minBtn.Position = UDim2.new(1, -30, 0, 28)
+minBtn.ZIndex = 5
+minBtn.Parent = win
+corner(minBtn, 16)
+pressFx(minBtn, false)
+
+---------------------------------------------------------------- ЗНАЧОК-ВАТЕРМАРК
+local markRoot = Instance.new("Frame")
+markRoot.Name = "Watermark"
+markRoot.AnchorPoint = Vector2.new(0.5, 0.5)
+markRoot.Size = UDim2.fromOffset(36, 36)
+markRoot.Position = UDim2.fromOffset(34, 76)
+markRoot.BackgroundTransparency = 1
+markRoot.Parent = gui
+local markScale = Instance.new("UIScale")
+markScale.Parent = markRoot
+
+local pulse = Instance.new("Frame")
+pulse.AnchorPoint = Vector2.new(0.5, 0.5)
+pulse.Position = UDim2.fromScale(0.5, 0.5)
+pulse.Size = UDim2.fromOffset(36, 36)
+pulse.BackgroundTransparency = 1
+pulse.ZIndex = 9
+pulse.Parent = markRoot
+corner(pulse, 10)
+local pulseStroke = Instance.new("UIStroke")
+pulseStroke.Thickness = 2
+pulseStroke.Color = C.on
+pulseStroke.Transparency = 0.2
+pulseStroke.Parent = pulse
+TweenService:Create(pulse, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1, false),
+	{ Size = UDim2.fromOffset(58, 58) }):Play()
+TweenService:Create(pulseStroke, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1, false),
+	{ Transparency = 1 }):Play()
+onAccent(function(c) pulseStroke.Color = c end)
+
+local spin = Instance.new("Frame")
+spin.AnchorPoint = Vector2.new(0.5, 0.5)
+spin.Position = UDim2.fromScale(0.5, 0.5)
+spin.Size = UDim2.fromOffset(46, 46)
+spin.BackgroundTransparency = 1
+spin.ZIndex = 9
+spin.Parent = markRoot
+corner(spin, 12)
+local spinStroke = Instance.new("UIStroke")
+spinStroke.Thickness = 2
+spinStroke.Color = Color3.new(1, 1, 1)
+spinStroke.Parent = spin
+local spinGrad = Instance.new("UIGradient")
+spinGrad.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0),
+	NumberSequenceKeypoint.new(0.3, 1),
+	NumberSequenceKeypoint.new(0.7, 1),
+	NumberSequenceKeypoint.new(1, 0),
+})
+spinGrad.Parent = spinStroke
+
+local mark = Instance.new("ImageButton")
+mark.Size = UDim2.fromScale(1, 1)
+mark.BackgroundColor3 = C.bg
+mark.AutoButtonColor = false
+mark.Image = LOGO
+mark.ScaleType = Enum.ScaleType.Fit
+mark.ZIndex = 10
+mark.Parent = markRoot
+corner(mark, 10)
+local markStroke = Instance.new("UIStroke")
+markStroke.Thickness = 1.5
+markStroke.Color = C.on
+markStroke.Parent = mark
+onAccent(function(c) tw(markStroke, 0.3, { Color = c }) end)
+
+---------------------------------------------------------------- ВІДКРИТТЯ / ЗАКРИТТЯ
+local token = 0
+setOpen = function(state)
+	token += 1
+	local my = token
+	spin.Visible = state
+	if state then
+		holder.Visible = true
+		uiScale.Scale = curScale * 0.8
+		win.GroupTransparency = 1
+		tw(uiScale, 0.45, { Scale = curScale }, Enum.EasingStyle.Back)
+		tw(win, 0.3, { GroupTransparency = 0 })
+	else
+		tw(uiScale, 0.25, { Scale = curScale * 0.8 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		local t = tw(win, 0.25, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		t.Completed:Connect(function()
+			if token == my then holder.Visible = false end
+		end)
+	end
+end
+
+local function flip()
+	isOpen = not isOpen
+	setOpen(isOpen)
+end
+
+makeDraggable(mark, markRoot, flip, function()
+	tw(markScale, 0.15, { Scale = 0.88 })
+end, function()
+	tw(markScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+end)
+
+minBtn.Activated:Connect(function()
+	isOpen = false
+	setOpen(false)
+end)
+
+bind(UserInputService.InputBegan, function(i, processed)
+	if processed then return end
+	if i.KeyCode == HOTKEY then flip() end
+end)
+
+---------------------------------------------------------------- ЄДИНИЙ ЦИКЛ
+local rot, statTimer = 0, 0
+bind(RunService.RenderStepped, function(dt)
+	rot = (rot + dt * 70) % 360
+	fps += (1 / math.max(dt, 1e-4) - fps) * math.min(1, dt * 4)
+	if spin.Visible then spinGrad.Rotation = rot * 2 % 360 end
+	if not holder.Visible then return end
+
+	statTimer += dt
+	if statTimer > 0.5 and statsLabel then
+		statTimer = 0
+		local ok, ping = pcall(function() return lp:GetNetworkPing() * 1000 end)
+		statsLabel.Text = string.format("FPS %d  |  Ping %d ms", math.floor(fps), math.floor(ok and ping or 0))
+	end
+end)
+
+_G.Aurora = { Settings = Settings, Hooks = Hooks, Notify = notify }
+
+selectTab("Main")
+applyTheme(THEMES[1])
+setOpen(true)
