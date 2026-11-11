@@ -1594,7 +1594,7 @@ local Chams = {}
 do
 	local WHITE = Color3.new(1, 1, 1)
 
-	-- "Ghost" = голографічний переліив: лавандовий -> рожевий -> блакитний -> м'ятний
+	-- "Holo" = голографічний перелив: лавандовий -> рожевий -> блакитний -> м'ятний
 	local HOLO = {
 		Color3.fromRGB(205, 172, 255),
 		Color3.fromRGB(255, 182, 236),
@@ -1609,9 +1609,13 @@ do
 	local SPEEDS = { Normal = 1, Slow = 0.4, Fast = 2.2 }
 	local FILLS = { Light = 0.7, Medium = 0.5, Strong = 0.25, Full = 0 }
 
+	-- Ghost: фіксований лавандовий колір без затемнення, "дихає" лише прозорість
+	local GHOST_FILL = Color3.fromRGB(185, 145, 255)
+	local GHOST_OUTLINE = Color3.fromRGB(230, 200, 255)
+
 	local state = {
-		on = false, body = true, wings = true, hat = true,
-		mode = "Ghost", speed = 1, fill = 0.7, outline = true, walls = true,
+		on = false, body = true, wings = true, hat = true, ghostBody = true,
+		mode = "Ghost", speed = 1, fill = 0.25, outline = true, walls = true,
 	}
 
 	local container = Instance.new("Folder")
@@ -1637,6 +1641,8 @@ do
 		local m = state.mode
 		local fill, outl
 		if m == "Ghost" then
+			return GHOST_FILL, GHOST_OUTLINE
+		elseif m == "Holo" then
 			-- заливка й контур переливаються з різним зсувом + блиск (glint) що пробігає
 			local glint = 0.5 + 0.5 * math.sin(t * 2.4 + off * 5)
 			fill = cyc(HOLO, t * 0.5 + off * 2.5):Lerp(WHITE, 0.1 + 0.25 * glint)
@@ -1665,9 +1671,62 @@ do
 		end
 	end
 
+	-- Ghost body: частини тіла стають напівпрозорим ForceField (як у твоєму скрипті);
+	-- після вимкнення все повертається як було
+	local ghostOrig = setmetatable({}, { __mode = "k" })
+	local ghostChar, ghostConn
+
+	local function ghostPaint(p)
+		if not p:IsA("BasePart") or p.Name == "HumanoidRootPart" then return end
+		if ghostOrig[p] == nil then
+			if p.Transparency >= 0.95 then
+				ghostOrig[p] = false -- невидимі частини не чіпаємо
+				return
+			end
+			ghostOrig[p] = { p.Transparency, p.Color, p.Material }
+		end
+		if ghostOrig[p] then
+			p.Transparency = 0.4
+			p.Color = GHOST_FILL
+			p.Material = Enum.Material.ForceField
+		end
+	end
+
+	local function ghostRestore()
+		if ghostConn then
+			ghostConn:Disconnect()
+			ghostConn = nil
+		end
+		for p, o in pairs(ghostOrig) do
+			if o and p.Parent then
+				p.Transparency, p.Color, p.Material = o[1], o[2], o[3]
+			end
+		end
+		ghostOrig = setmetatable({}, { __mode = "k" })
+		ghostChar = nil
+	end
+
+	local function ghostApply(char)
+		ghostChar = char
+		for _, d in ipairs(char:GetDescendants()) do ghostPaint(d) end
+		ghostConn = char.DescendantAdded:Connect(ghostPaint)
+	end
+
 	bind(RunService.RenderStepped, function(dt)
 		if dead then return end
 		clock += dt * state.speed
+
+		local wantGhost = state.on and state.body and state.ghostBody and state.mode == "Ghost"
+		local ch = lp.Character
+		if wantGhost and ch then
+			if ghostChar ~= ch then
+				ghostRestore()
+				ghostApply(ch)
+			end
+		elseif ghostChar then
+			ghostRestore()
+		end
+
 		for kind, off in pairs(order) do
 			local model = targetOf(kind)
 			if state.on and state[kind] and model and model.Parent then
@@ -1682,12 +1741,19 @@ do
 				local fillCol, outCol = colorsFor(clock, off)
 				h.FillColor = fillCol
 				h.OutlineColor = outCol
-				local shimmer = 0.08 * math.sin(clock * 3 + off * 5)
 				if state.mode == "Ghost" then
-					shimmer += 0.06 * math.sin(clock * 7 + off * 11)
+					-- плавне "дихання" без затемнення: заливка ±0.07, контур 0..0.08 (період ~2.4с)
+					local s = math.sin(clock * 2.618 + off * 2)
+					h.FillTransparency = math.clamp(state.fill + 0.07 * s, 0, 1)
+					h.OutlineTransparency = state.outline and (0.04 + 0.04 * s) or 1
+				else
+					local shimmer = 0.08 * math.sin(clock * 3 + off * 5)
+					if state.mode == "Holo" then
+						shimmer += 0.06 * math.sin(clock * 7 + off * 11)
+					end
+					h.FillTransparency = math.clamp(state.fill + shimmer, 0, 1)
+					h.OutlineTransparency = state.outline and 0 or 1
 				end
-				h.FillTransparency = math.clamp(state.fill + shimmer, 0, 1)
-				h.OutlineTransparency = state.outline and 0 or 1
 				h.DepthMode = state.walls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
 			else
 				drop(kind)
@@ -1696,6 +1762,7 @@ do
 	end)
 
 	function Chams.setEnabled(on) state.on = on end
+	function Chams.setGhostBody(on) state.ghostBody = on end
 	function Chams.setBody(on) state.body = on end
 	function Chams.setWings(on) state.wings = on end
 	function Chams.setHat(on) state.hat = on end
@@ -1706,6 +1773,7 @@ do
 	function Chams.setWalls(on) state.walls = on end
 	function Chams.cleanup()
 		dead = true
+		ghostRestore()
 		container:Destroy()
 	end
 end
@@ -1900,9 +1968,10 @@ local function buildFun(pane)
 	ct("Body", "CM_Body", true, Chams.setBody)
 	ct("Wings", "CM_Wings", true, Chams.setWings)
 	ct("Hat", "CM_Hat", true, Chams.setHat)
-	cs("Mode", "CM_Mode", { "Ghost", "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, Chams.setMode)
+	ct("Ghost body", "CM_Ghost", true, Chams.setGhostBody)
+	cs("Mode", "CM_Mode", { "Ghost", "Holo", "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, Chams.setMode)
 	cs("Speed", "CM_Speed", { "Normal", "Slow", "Fast" }, Chams.setSpeed)
-	cs("Fill", "CM_Fill", { "Light", "Medium", "Strong", "Full" }, Chams.setFill)
+	cs("Fill", "CM_Fill", { "Strong", "Medium", "Light", "Full" }, Chams.setFill)
 	ct("Outline", "CM_Outline", true, Chams.setOutline)
 	ct("Through walls", "CM_Walls", true, Chams.setWalls)
 end
