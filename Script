@@ -1615,7 +1615,7 @@ do
 
 	local state = {
 		on = false, body = true, wings = true, hat = true, ghostBody = true,
-		mode = "Ghost", speed = 1, fill = 0.25, outline = true, walls = true,
+		mode = "Ghost", custom = GHOST_FILL, speed = 1, fill = 0.25, outline = true, walls = true,
 	}
 
 	local container = Instance.new("Folder")
@@ -1642,6 +1642,8 @@ do
 		local fill, outl
 		if m == "Ghost" then
 			return GHOST_FILL, GHOST_OUTLINE
+		elseif m == "Custom" then
+			return state.custom, state.custom:Lerp(WHITE, 0.45)
 		elseif m == "Holo" then
 			-- заливка й контур переливаються з різним зсувом + блиск (glint) що пробігає
 			local glint = 0.5 + 0.5 * math.sin(t * 2.4 + off * 5)
@@ -1675,6 +1677,7 @@ do
 	-- після вимкнення все повертається як було
 	local ghostOrig = setmetatable({}, { __mode = "k" })
 	local ghostChar, ghostConn
+	local ghostColor = GHOST_FILL
 
 	local function ghostPaint(p)
 		if not p:IsA("BasePart") or p.Name == "HumanoidRootPart" then return end
@@ -1687,7 +1690,7 @@ do
 		end
 		if ghostOrig[p] then
 			p.Transparency = 0.4
-			p.Color = GHOST_FILL
+			p.Color = ghostColor
 			p.Material = Enum.Material.ForceField
 		end
 	end
@@ -1708,6 +1711,7 @@ do
 
 	local function ghostApply(char)
 		ghostChar = char
+		ghostColor = (state.mode == "Custom") and state.custom or GHOST_FILL
 		for _, d in ipairs(char:GetDescendants()) do ghostPaint(d) end
 		ghostConn = char.DescendantAdded:Connect(ghostPaint)
 	end
@@ -1716,7 +1720,8 @@ do
 		if dead then return end
 		clock += dt * state.speed
 
-		local wantGhost = state.on and state.body and state.ghostBody and state.mode == "Ghost"
+		local wantGhost = state.on and state.body and state.ghostBody
+			and (state.mode == "Ghost" or state.mode == "Custom")
 		local ch = lp.Character
 		if wantGhost and ch then
 			if ghostChar ~= ch then
@@ -1725,6 +1730,16 @@ do
 			end
 		elseif ghostChar then
 			ghostRestore()
+		end
+
+		if ghostChar then
+			local gc = (state.mode == "Custom") and state.custom or GHOST_FILL
+			if gc ~= ghostColor then
+				ghostColor = gc
+				for p, o in pairs(ghostOrig) do
+					if o and p.Parent then p.Color = gc end
+				end
+			end
 		end
 
 		for kind, off in pairs(order) do
@@ -1741,7 +1756,7 @@ do
 				local fillCol, outCol = colorsFor(clock, off)
 				h.FillColor = fillCol
 				h.OutlineColor = outCol
-				if state.mode == "Ghost" then
+				if state.mode == "Ghost" or state.mode == "Custom" then
 					-- плавне "дихання" без затемнення: заливка ±0.07, контур 0..0.08 (період ~2.4с)
 					local s = math.sin(clock * 2.618 + off * 2)
 					h.FillTransparency = math.clamp(state.fill + 0.07 * s, 0, 1)
@@ -1763,6 +1778,12 @@ do
 
 	function Chams.setEnabled(on) state.on = on end
 	function Chams.setGhostBody(on) state.ghostBody = on end
+	function Chams.setCustom(c) state.custom = c end
+	-- поточний колір заливки (для орбіт і котячих вушок)
+	function Chams.getColor()
+		local f = colorsFor(clock, 0.15)
+		return f
+	end
 	function Chams.setBody(on) state.body = on end
 	function Chams.setWings(on) state.wings = on end
 	function Chams.setHat(on) state.hat = on end
@@ -1775,6 +1796,557 @@ do
 		dead = true
 		ghostRestore()
 		container:Destroy()
+	end
+end
+
+---------------------------------------------------------------- ORBITS (орбіти навколо персонажа)
+local Orbits = {}
+do
+	local WHITE = Color3.new(1, 1, 1)
+	local SPEEDS = { Slow = 0.7, Normal = 1.4, Fast = 2.8 }
+	local RADII = { Small = 2.6, Medium = 3.3, Large = 4.4 }
+	local SIZES = { Small = 0.25, Medium = 0.4, Large = 0.65 }
+
+	local state = {
+		on = false, shape = "Orbs", pattern = "Ring", count = 6, radius = "Medium",
+		size = "Medium", speed = "Normal", color = "Match", trails = true, glow = true,
+	}
+
+	local folder, root, rootWeld, char, hrp
+	local pieces = {}
+	local t = 0
+	local dead = false
+
+	local function clear()
+		if folder then folder:Destroy() end
+		folder, root, rootWeld = nil, nil, nil
+		pieces = {}
+	end
+
+	local function build()
+		clear()
+		char = lp.Character
+		hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		folder = Instance.new("Model")
+		folder.Name = "Orbits"
+
+		root = Instance.new("Part")
+		root.Size = Vector3.new(0.2, 0.2, 0.2)
+		root.Transparency = 1
+		root.Massless = true
+		root.CanCollide = false
+		root.CanTouch = false
+		root.CanQuery = false
+		root.CastShadow = false
+		root.CFrame = hrp.CFrame
+		root.Parent = folder
+
+		rootWeld = Instance.new("Weld")
+		rootWeld.Part0 = hrp
+		rootWeld.Part1 = root
+		rootWeld.C0 = CFrame.new(0, 0.2, 0)
+		rootWeld.Parent = root
+
+		local s = SIZES[state.size]
+		local hw = math.max(s * 0.45, 0.1)
+		for i = 1, state.count do
+			local p = Instance.new("Part")
+			if state.shape == "Orbs" then
+				p.Shape = Enum.PartType.Ball
+				p.Size = Vector3.new(s, s, s)
+			elseif state.shape == "Gems" then
+				p.Shape = Enum.PartType.Block
+				p.Size = Vector3.new(s, s, s)
+			else
+				-- пір'їна: сплюснутий еліпсоїд, що летить довгою стороною вперед
+				p.Shape = Enum.PartType.Block
+				p.Size = Vector3.new(s * 0.45, 0.04, s * 2.2)
+				local m = Instance.new("SpecialMesh")
+				m.MeshType = Enum.MeshType.Sphere
+				m.Parent = p
+			end
+			p.Material = state.glow and Enum.Material.Neon or Enum.Material.SmoothPlastic
+			p.Massless = true
+			p.CanCollide = false
+			p.CanTouch = false
+			p.CanQuery = false
+			p.CastShadow = false
+			p.TopSurface = Enum.SurfaceType.Smooth
+			p.BottomSurface = Enum.SurfaceType.Smooth
+			p.CFrame = hrp.CFrame
+			p.Parent = folder
+
+			local w = Instance.new("Weld")
+			w.Part0 = root
+			w.Part1 = p
+			w.C0 = CFrame.new()
+			w.Parent = p
+
+			local a0 = Instance.new("Attachment")
+			a0.Position = Vector3.new(0, hw, 0)
+			a0.Parent = p
+			local a1 = Instance.new("Attachment")
+			a1.Position = Vector3.new(0, -hw, 0)
+			a1.Parent = p
+			local tr = Instance.new("Trail")
+			tr.Attachment0 = a0
+			tr.Attachment1 = a1
+			tr.Lifetime = 0.5
+			tr.MinLength = 0.05
+			tr.LightEmission = 1
+			tr.FaceCamera = true
+			tr.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.25),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			tr.WidthScale = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(1, 0),
+			})
+			tr.Enabled = state.trails
+			tr.Parent = p
+
+			pieces[#pieces + 1] = { part = p, weld = w, trail = tr }
+		end
+
+		folder.Parent = state.on and accRoot or nil
+	end
+
+	-- позиція i-го елемента (у системі кореня), кут і напрямок руху
+	local function slot(i, n, R)
+		local phase = (i - 1) / n * math.pi * 2
+		local pat = state.pattern
+		local dirn, y = 1, 0
+		if pat == "Double" then
+			dirn = (i % 2 == 0) and 1 or -1
+			y = (i % 2 == 0) and 0.9 or -0.9
+		elseif pat == "Wave" then
+			y = math.sin(phase * 3 + t * 1.5) * 0.7
+		elseif pat == "Spiral" then
+			y = ((i - 1) / math.max(n - 1, 1) - 0.5) * 3.2 + math.sin(t * 1.5) * 0.2
+		end
+		local a = dirn * t + phase
+		return Vector3.new(math.cos(a) * R, y, math.sin(a) * R), a, dirn
+	end
+
+	local function colorOf(i, n, match)
+		local m = state.color
+		if m == "Match" then
+			return match
+		elseif m == "Accent" then
+			return C.on:Lerp(WHITE, 0.25)
+		elseif m == "Rainbow" then
+			return Color3.fromHSV((t * 0.12 + (i - 1) / n) % 1, 0.65, 1)
+		end
+		return WHITE
+	end
+
+	bind(RunService.RenderStepped, function(dt)
+		if dead or not folder or not folder.Parent or not rootWeld then return end
+		if not hrp or not hrp.Parent then return end
+		dt = math.min(dt, 1 / 30)
+		t += dt * SPEEDS[state.speed]
+
+		local n = #pieces
+		local R = RADII[state.radius]
+		local match = Chams.getColor()
+		rootWeld.C0 = CFrame.new(0, 0.2 + math.sin(t * 0.8) * 0.12, 0)
+
+		for i, pc in ipairs(pieces) do
+			local pos, a, dirn = slot(i, n, R)
+			local cf
+			if state.shape == "Feathers" then
+				local tan = Vector3.new(-math.sin(a) * dirn, 0, math.cos(a) * dirn)
+				cf = CFrame.lookAt(pos, pos + tan)
+			elseif state.shape == "Gems" then
+				cf = CFrame.new(pos) * CFrame.Angles(t * 2 + i, t * 1.5 + i * 0.7, 0)
+			else
+				cf = CFrame.new(pos)
+			end
+			pc.weld.C0 = cf
+			local col = colorOf(i, n, match)
+			pc.part.Color = col
+			pc.trail.Color = ColorSequence.new(col)
+		end
+	end)
+
+	bind(lp.CharacterRemoving, function() clear() end)
+	bind(lp.CharacterAdded, function(c)
+		clear()
+		if not state.on then return end
+		task.spawn(function()
+			c:WaitForChild("HumanoidRootPart", 5)
+			task.wait(0.4)
+			if dead or lp.Character ~= c then return end
+			build()
+		end)
+	end)
+
+	-- API для меню
+	function Orbits.setEnabled(on)
+		state.on = on
+		if on and not folder then build() end
+		if folder then folder.Parent = on and accRoot or nil end
+	end
+	function Orbits.setShape(v) state.shape = v; if folder then build() end end
+	function Orbits.setPattern(v) state.pattern = v end
+	function Orbits.setCount(v) state.count = tonumber(v) or 6; if folder then build() end end
+	function Orbits.setRadius(v) state.radius = v end
+	function Orbits.setSize(v) state.size = v; if folder then build() end end
+	function Orbits.setSpeed(v) state.speed = v end
+	function Orbits.setColor(v) state.color = v end
+	function Orbits.setTrails(on)
+		state.trails = on
+		for _, pc in ipairs(pieces) do pc.trail.Enabled = on end
+	end
+	function Orbits.setGlow(on)
+		state.glow = on
+		for _, pc in ipairs(pieces) do
+			pc.part.Material = on and Enum.Material.Neon or Enum.Material.SmoothPlastic
+		end
+	end
+	function Orbits.cleanup()
+		dead = true
+		clear()
+	end
+end
+
+---------------------------------------------------------------- CAT (котячі вушка + хвіст)
+local Cat = {}
+do
+	local WHITE = Color3.new(1, 1, 1)
+	local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
+
+	local STYLES = {
+		{ name = "Lavender", outer = rgb(226, 188, 240), inner = rgb(255, 190, 222), tail = rgb(226, 188, 240), tip = rgb(250, 232, 255) },
+		{ name = "Black",    outer = rgb(32, 32, 38),    inner = rgb(150, 96, 130),  tail = rgb(32, 32, 38),    tip = rgb(92, 88, 112) },
+		{ name = "White",    outer = rgb(248, 246, 250), inner = rgb(255, 190, 210), tail = rgb(248, 246, 250), tip = rgb(255, 255, 255) },
+		{ name = "Orange",   outer = rgb(232, 148, 60),  inner = rgb(255, 205, 190), tail = rgb(232, 148, 60),  tip = rgb(255, 240, 220) },
+		{ name = "Gray",     outer = rgb(150, 150, 162), inner = rgb(240, 190, 204), tail = rgb(150, 150, 162), tip = rgb(214, 214, 224) },
+		{ name = "Accent", dyn = "accent" },
+		{ name = "Chams",  dyn = "chams" },
+	}
+	local EAR_SIZES = { Small = 0.8, Medium = 1, Large = 1.3 }
+	local TAIL_SIZES = { Small = 0.75, Medium = 1, Large = 1.3 }
+	local CURLS = { None = 0, Low = 0.55, Medium = 1, High = 1.5 }
+	local SEGS = 14
+
+	local state = {
+		on = false, style = 1, ears = true, tail = true, earSize = "Medium", place = "Head",
+		twitch = true, tailSize = "Medium", curl = "Medium", sway = true, glow = false,
+	}
+
+	local folder, head, char, hrp
+	local recs, earList, tailSegs = {}, {}, {}
+	local tailBase = Vector3.new(0, 0, 0.5)
+	local lastCol
+	local dead = false
+
+	local function getStyle()
+		local s = STYLES[state.style]
+		if s.dyn == "accent" then
+			local c = C.on
+			return { outer = c:Lerp(WHITE, 0.25), inner = c:Lerp(WHITE, 0.7), tail = c:Lerp(WHITE, 0.25), tip = c:Lerp(WHITE, 0.75) }
+		elseif s.dyn == "chams" then
+			local c = Chams.getColor()
+			return { outer = c, inner = c:Lerp(WHITE, 0.65), tail = c, tip = c:Lerp(WHITE, 0.6) }
+		end
+		return s
+	end
+
+	local function paint()
+		local s = getStyle()
+		local smooth = Enum.Material.SmoothPlastic
+		local neon = state.glow and Enum.Material.Neon or smooth
+		for _, r in ipairs(recs) do
+			local k, p = r.kind, r.part
+			if k == "outer" then
+				p.Color, p.Material = s.outer, smooth
+			elseif k == "inner" then
+				p.Color, p.Material = s.inner, neon
+			elseif k == "tail" then
+				p.Color, p.Material = s.tail, smooth
+			elseif k == "tip" then
+				p.Color, p.Material = s.tip, neon
+			end
+		end
+	end
+
+	local function clear()
+		if folder then folder:Destroy() end
+		folder = nil
+		recs, earList, tailSegs = {}, {}, {}
+	end
+
+	local function newPart(shape, size, parentPart, c0, kind)
+		local p = Instance.new("Part")
+		p.Shape = shape
+		p.Size = size
+		p.Massless = true
+		p.CanCollide = false
+		p.CanTouch = false
+		p.CanQuery = false
+		p.CastShadow = false
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		p.CFrame = parentPart.CFrame
+		p.Parent = folder
+		local w = Instance.new("Weld")
+		w.Part0 = parentPart
+		w.Part1 = p
+		w.C0 = c0
+		w.Parent = p
+		if kind then recs[#recs + 1] = { part = p, kind = kind } end
+		return p, w
+	end
+
+	local function mkW(kind, rootPart, size, cf)
+		local p = Instance.new("WedgePart")
+		p.Size = size
+		p.Massless = true
+		p.CanCollide = false
+		p.CanTouch = false
+		p.CanQuery = false
+		p.CastShadow = false
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		p.CFrame = rootPart.CFrame
+		p.Parent = folder
+		local w = Instance.new("Weld")
+		w.Part0 = rootPart
+		w.Part1 = p
+		w.C0 = cf
+		w.Parent = p
+		recs[#recs + 1] = { part = p, kind = kind }
+	end
+
+	-- трикутник з двох клинів (той самий метод, що й у гладкого капелюха)
+	local function tri(kind, rootPart, a, b, c)
+		local ab, ac, bc = b - a, c - a, c - b
+		local abd, acd, bcd = ab:Dot(ab), ac:Dot(ac), bc:Dot(bc)
+		if abd > acd and abd > bcd then
+			c, a = a, c
+		elseif acd > bcd and acd > abd then
+			a, b = b, a
+		end
+		ab, ac, bc = b - a, c - a, c - b
+		local right = ac:Cross(ab).Unit
+		local up = bc:Cross(right).Unit
+		local back = bc.Unit
+		local height = math.abs(ab:Dot(up))
+		mkW(kind, rootPart, Vector3.new(0.02, height, math.abs(ab:Dot(back))),
+			CFrame.fromMatrix((a + b) / 2, right, up, back))
+		mkW(kind, rootPart, Vector3.new(0.02, height, math.abs(ac:Dot(back))),
+			CFrame.fromMatrix((a + c) / 2, -right, up, -back))
+	end
+
+	-- sd: 1 = праве вухо, -1 = ліве
+	local function buildEar(sd, hs)
+		local u = math.clamp(hs.X / 1.2, 0.85, 1.4)
+		local s = EAR_SIZES[state.earSize] * u
+		local w, d, h = 0.5 * s, 0.22 * s, 0.78 * s
+		local ex = hs.X * 0.28
+		local onHat = state.place == "Hat"
+		-- "Hat": вушка піднімаються на конус капелюха (Smooth: R 1.65, H 0.8) і нахиляються по схилу
+		local lift = onHat and math.max(0, 0.8 * (1 - ex / 1.65) - 0.1 * hs.Y) or 0
+		local tilt = onHat and (math.atan(0.8 / 1.65) + 0.05) or 0.2
+		local topY = hs.Y / 2 - 0.03 + lift
+
+		local er, ew = newPart(Enum.PartType.Block, Vector3.new(0.1, 0.1, 0.1), head,
+			CFrame.new(sd * ex, topY, 0) * CFrame.Angles(0, 0, -sd * tilt))
+		er.Transparency = 1
+
+		-- піраміда з прямокутною основою; перед капелюха/голови дивиться в -Z
+		local p1 = Vector3.new(-w / 2, -0.05, -d / 2)
+		local p2 = Vector3.new(w / 2, -0.05, -d / 2)
+		local p3 = Vector3.new(w / 2, -0.05, d / 2)
+		local p4 = Vector3.new(-w / 2, -0.05, d / 2)
+		local A = Vector3.new(sd * 0.04 * s, h, 0)
+		tri("outer", er, A, p1, p2)
+		tri("outer", er, A, p2, p3)
+		tri("outer", er, A, p3, p4)
+		tri("outer", er, A, p4, p1)
+
+		-- рожева внутрішня частина на передній грані
+		local cen = (A + p1 + p2) / 3
+		local n = (p1 - A):Cross(p2 - A)
+		if n.Magnitude > 1e-4 then
+			n = n.Unit
+			if n.Z > 0 then n = -n end
+			local off = n * 0.015
+			local k = 0.58
+			tri("inner", er, cen + (A - cen) * k + off, cen + (p1 - cen) * k + off, cen + (p2 - cen) * k + off)
+		end
+
+		earList[#earList + 1] = { weld = ew, sd = sd, ex = ex, topY = topY, tilt = tilt }
+	end
+
+	local function buildTail()
+		local base = char:FindFirstChild("LowerTorso")
+		if base then
+			tailBase = Vector3.new(0, 0, 0.5)
+		else
+			base = char:FindFirstChild("Torso")
+			tailBase = Vector3.new(0, -0.8, 0.5)
+		end
+		if not base then return end
+
+		local s = TAIL_SIZES[state.tailSize]
+		local prev = base
+		for i = 1, SEGS do
+			local f = (i - 1) / (SEGS - 1)
+			local d = (0.36 - 0.14 * f) * s
+			local kind = (i > SEGS - 3) and "tip" or "tail"
+			local c0 = (i == 1) and (CFrame.new(tailBase) * CFrame.Angles(-0.35, 0, 0)) or CFrame.new(0, 0, 0.2 * s)
+			local p, w = newPart(Enum.PartType.Ball, Vector3.new(d, d, d), prev, c0, kind)
+			tailSegs[i] = { weld = w, f = f, space = 0.2 * s }
+			prev = p
+		end
+	end
+
+	local function build()
+		clear()
+		char = lp.Character
+		head = char and char:FindFirstChild("Head")
+		hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not (head and hrp) then return end
+
+		folder = Instance.new("Model")
+		folder.Name = "CatParts"
+		local hs = head.Size
+		if state.ears then
+			buildEar(1, hs)
+			buildEar(-1, hs)
+		end
+		if state.tail then buildTail() end
+		lastCol = nil
+		paint()
+		folder.Parent = state.on and accRoot or nil
+	end
+
+	-- анімація: вушка відкидаються назад на бігу + смикаються, хвіст — ланцюг пружин
+	local clock = 0
+	local earBack = 0
+	local twTimer, twEar, twAge = 2, 1, 1
+	local pitA, pitV, yawA, yawV = {}, {}, {}, {}
+
+	local function spr(a, v, target, k, c, dt)
+		v += ((target - a) * k - v * c) * dt
+		a += v * dt
+		return a, v
+	end
+
+	bind(RunService.RenderStepped, function(dt)
+		if dead or not folder or not folder.Parent then return end
+		if not head or not head.Parent then return end
+		dt = math.min(dt, 1 / 30)
+		clock += dt
+
+		local lv = Vector3.zero
+		if hrp and hrp.Parent then
+			lv = hrp.CFrame:VectorToObjectSpace(hrp.AssemblyLinearVelocity)
+		end
+		local sp = math.clamp(lv.Magnitude / 16, 0, 1.3)
+
+		if STYLES[state.style].dyn == "chams" then
+			local c = Chams.getColor()
+			if c ~= lastCol then
+				lastCol = c
+				paint()
+			end
+		end
+
+		-- вушка
+		if #earList > 0 then
+			local backT = math.clamp(-lv.Z * 0.012, 0, 0.35)
+			earBack += (backT - earBack) * math.min(dt * 8, 1)
+			twTimer -= dt
+			if twTimer <= 0 then
+				twTimer = 2.5 + math.random() * 3.5
+				twEar = math.random(#earList)
+				twAge = 0
+			end
+			twAge += dt
+			local env = (state.twitch and twAge < 0.35) and (1 - twAge / 0.35) or 0
+			for idx, e in ipairs(earList) do
+				local flick = (idx == twEar) and math.sin(twAge * 40) * 0.22 * env or 0
+				local idle = math.sin(clock * 1.1 + idx * 2) * 0.015
+				e.weld.C0 = CFrame.new(e.sd * e.ex, e.topY, 0)
+					* CFrame.Angles(0, 0, -e.sd * e.tilt + flick)
+					* CFrame.Angles(earBack + idle, 0, 0)
+			end
+		end
+
+		-- хвіст
+		if #tailSegs > 0 then
+			local curlK = CURLS[state.curl] * (1 - math.clamp(-lv.Z / 16, 0, 1) * 0.6)
+			local swayAmt = state.sway and 1 or 0.15
+			local moveYaw = -math.clamp(lv.X * 0.012, -0.25, 0.25)
+			local liftP = math.clamp(lv.Y * 0.003, -0.08, 0.08)
+			local freq = 1.8 + sp * 2.2
+			for i, sg in ipairs(tailSegs) do
+				local f = sg.f
+				local curl = (0.05 + 0.07 * f) * curlK
+				local waveYaw = math.sin(clock * freq - i * 0.5) * (0.04 + 0.03 * f) * swayAmt * (0.6 + sp)
+				local waveP = math.sin(clock * freq * 0.7 - i * 0.4 + 1) * 0.02 * swayAmt
+				local yT = waveYaw + moveYaw * 0.22
+				local pT = -curl + waveP + liftP
+				yawA[i], yawV[i] = spr(yawA[i] or 0, yawV[i] or 0, yT, 45, 6.5, dt)
+				pitA[i], pitV[i] = spr(pitA[i] or pT, pitV[i] or 0, pT, 45, 6.5, dt)
+				if i == 1 then
+					sg.weld.C0 = CFrame.new(tailBase) * CFrame.Angles(-0.35 + pitA[i], yawA[i], 0)
+				else
+					sg.weld.C0 = CFrame.Angles(pitA[i], yawA[i], 0) * CFrame.new(0, 0, sg.space)
+				end
+			end
+		end
+	end)
+
+	bind(lp.CharacterRemoving, function() clear() end)
+	bind(lp.CharacterAdded, function(c)
+		clear()
+		pitA, pitV, yawA, yawV = {}, {}, {}, {}
+		if not state.on then return end
+		task.spawn(function()
+			c:WaitForChild("Head", 5)
+			c:WaitForChild("HumanoidRootPart", 5)
+			task.wait(0.4)
+			if dead or lp.Character ~= c then return end
+			build()
+		end)
+	end)
+
+	onAccent(function()
+		if folder and STYLES[state.style].dyn == "accent" then paint() end
+	end)
+
+	-- API для меню
+	function Cat.setEnabled(on)
+		state.on = on
+		if on and not folder then build() end
+		if folder then folder.Parent = on and accRoot or nil end
+	end
+	function Cat.setStyle(name)
+		for i, s in ipairs(STYLES) do
+			if s.name == name then state.style = i end
+		end
+		lastCol = nil
+		paint()
+	end
+	function Cat.setEars(on) state.ears = on; if folder then build() end end
+	function Cat.setEarSize(v) state.earSize = v; if folder then build() end end
+	function Cat.setEarPlace(v) state.place = v; if folder then build() end end
+	function Cat.setTwitch(on) state.twitch = on end
+	function Cat.setTail(on) state.tail = on; if folder then build() end end
+	function Cat.setTailSize(v) state.tailSize = v; if folder then build() end end
+	function Cat.setCurl(v) state.curl = v end
+	function Cat.setSway(on) state.sway = on end
+	function Cat.setGlow(on) state.glow = on; paint() end
+	function Cat.cleanup()
+		dead = true
+		clear()
 	end
 end
 
@@ -1860,8 +2432,8 @@ local function buildFun(pane)
 			end
 		end
 
-		local function miniRow(name, cond)
-			local row = card(pane, 34)
+		local function miniRow(name, cond, h)
+			local row = card(pane, h or 34)
 			row.Visible = false
 			opts[#opts + 1] = { row = row, cond = cond }
 			label(row, name, 15, C.text, UDim2.fromOffset(12, 7), UDim2.fromOffset(170, 20))
@@ -1914,6 +2486,104 @@ local function buildFun(pane)
 			end)
 		end
 
+		-- компактний вибір кольору: SV-поле + смуга відтінку
+		local function mcolor(name, default, callback, cond)
+			local row = miniRow(name, cond, 112)
+			local hh, ss, vv = default:ToHSV()
+
+			local preview = Instance.new("Frame")
+			preview.AnchorPoint = Vector2.new(1, 0)
+			preview.Position = UDim2.new(1, -12, 0, 6)
+			preview.Size = UDim2.fromOffset(34, 20)
+			preview.BackgroundColor3 = default
+			preview.BorderSizePixel = 0
+			preview.Parent = row
+			corner(preview, 7)
+
+			local svBox = Instance.new("Frame")
+			svBox.Position = UDim2.fromOffset(12, 32)
+			svBox.Size = UDim2.new(1, -24, 0, 50)
+			svBox.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
+			svBox.BorderSizePixel = 0
+			svBox.ClipsDescendants = true
+			svBox.Parent = row
+			corner(svBox, 8)
+			local white = Instance.new("Frame")
+			white.Size = UDim2.fromScale(1, 1)
+			white.BackgroundColor3 = Color3.new(1, 1, 1)
+			white.BorderSizePixel = 0
+			white.Parent = svBox
+			local wg = Instance.new("UIGradient")
+			wg.Transparency = NumberSequence.new(0, 1)
+			wg.Parent = white
+			local black = Instance.new("Frame")
+			black.Size = UDim2.fromScale(1, 1)
+			black.BackgroundColor3 = Color3.new(0, 0, 0)
+			black.BorderSizePixel = 0
+			black.Parent = svBox
+			local bg2 = Instance.new("UIGradient")
+			bg2.Rotation = 90
+			bg2.Transparency = NumberSequence.new(1, 0)
+			bg2.Parent = black
+			local cur = Instance.new("Frame")
+			cur.AnchorPoint = Vector2.new(0.5, 0.5)
+			cur.Size = UDim2.fromOffset(12, 12)
+			cur.BackgroundTransparency = 1
+			cur.ZIndex = 3
+			cur.Parent = svBox
+			corner(cur, 6)
+			local curStroke = Instance.new("UIStroke")
+			curStroke.Color = Color3.new(1, 1, 1)
+			curStroke.Thickness = 2
+			curStroke.Parent = cur
+
+			local hueBar = Instance.new("Frame")
+			hueBar.Position = UDim2.fromOffset(12, 90)
+			hueBar.Size = UDim2.new(1, -24, 0, 14)
+			hueBar.BackgroundColor3 = Color3.new(1, 1, 1)
+			hueBar.BorderSizePixel = 0
+			hueBar.Parent = row
+			corner(hueBar, 7)
+			local hg = Instance.new("UIGradient")
+			do
+				local keys = {}
+				for i = 0, 6 do
+					table.insert(keys, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(math.min(i / 6, 0.999), 1, 1)))
+				end
+				hg.Color = ColorSequence.new(keys)
+			end
+			hg.Parent = hueBar
+			local hKnob = Instance.new("Frame")
+			hKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+			hKnob.Size = UDim2.fromOffset(8, 20)
+			hKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+			hKnob.ZIndex = 3
+			hKnob.Parent = hueBar
+			corner(hKnob, 4)
+
+			local function paintUI()
+				svBox.BackgroundColor3 = Color3.fromHSV(hh, 1, 1)
+				cur.Position = UDim2.fromScale(ss, 1 - vv)
+				hKnob.Position = UDim2.fromScale(hh, 0.5)
+				preview.BackgroundColor3 = Color3.fromHSV(hh, ss, vv)
+			end
+			paintUI()
+
+			local function apply()
+				paintUI()
+				if callback then callback(Color3.fromHSV(hh, ss, vv)) end
+			end
+
+			dragArea(svBox, pane, function(rx, ry)
+				ss, vv = rx, 1 - ry
+				apply()
+			end)
+			dragArea(hueBar, pane, function(rx)
+				hh = math.min(rx, 0.999)
+				apply()
+			end, true)
+		end
+
 		gear.Activated:Connect(function()
 			open = not open
 			refresh()
@@ -1923,7 +2593,7 @@ local function buildFun(pane)
 			if open then gear.BackgroundColor3 = c end
 		end)
 
-		return mtoggle, mselect, refresh
+		return mtoggle, mselect, refresh, mcolor
 	end
 
 	-- КРИЛА
@@ -1962,14 +2632,48 @@ local function buildFun(pane)
 	ht("Glow", "HT_Glow", false, Hats.setGlow)
 	ht("Sway", "HT_Sway", true, Hats.setSway)
 
+	-- CAT (вушка + хвіст)
+	section(pane, "Cat")
+	local kt, ksel = group("Cat ears & tail", "Ears and a swaying tail", "CT_On", Cat.setEnabled)
+	ksel("Style", "CT_Style", { "Lavender", "Black", "White", "Orange", "Gray", "Accent", "Chams" }, Cat.setStyle)
+	kt("Ears", "CT_Ears", true, Cat.setEars)
+	ksel("Ear size", "CT_EarSize", { "Medium", "Small", "Large" }, Cat.setEarSize)
+	ksel("Ear place", "CT_EarPlace", { "Head", "Hat" }, Cat.setEarPlace)
+	kt("Ear twitch", "CT_Twitch", true, Cat.setTwitch)
+	kt("Tail", "CT_Tail", true, Cat.setTail)
+	ksel("Tail size", "CT_TailSize", { "Medium", "Small", "Large" }, Cat.setTailSize)
+	ksel("Tail curl", "CT_Curl", { "Medium", "Low", "High", "None" }, Cat.setCurl)
+	kt("Tail sway", "CT_Sway", true, Cat.setSway)
+	kt("Glow", "CT_Glow", false, Cat.setGlow)
+
+	-- ORBITS
+	section(pane, "Orbits")
+	local ot, osel = group("Orbits", "Things circling around you", "OB_On", Orbits.setEnabled)
+	osel("Shape", "OB_Shape", { "Orbs", "Gems", "Feathers" }, Orbits.setShape)
+	osel("Pattern", "OB_Pattern", { "Ring", "Double", "Wave", "Spiral" }, Orbits.setPattern)
+	osel("Count", "OB_Count", { "6", "3", "9", "12" }, Orbits.setCount)
+	osel("Radius", "OB_Radius", { "Medium", "Small", "Large" }, Orbits.setRadius)
+	osel("Size", "OB_Size", { "Medium", "Small", "Large" }, Orbits.setSize)
+	osel("Speed", "OB_Speed", { "Normal", "Slow", "Fast" }, Orbits.setSpeed)
+	osel("Color", "OB_Color", { "Match", "Accent", "Rainbow", "White" }, Orbits.setColor)
+	ot("Trails", "OB_Trails", true, Orbits.setTrails)
+	ot("Glow", "OB_Glow", true, Orbits.setGlow)
+
 	-- CHAMS (увімкнені за замовчуванням: Ghost, переливаються)
 	section(pane, "Chams")
-	local ct, cs = group("Chams", "Shimmering outline and fill", "CM_On", Chams.setEnabled, true)
+	local chamsMode = "Ghost"
+	local function isCustomMode() return chamsMode == "Custom" end
+	local ct, cs, crefresh, cc = group("Chams", "Shimmering outline and fill", "CM_On", Chams.setEnabled, true)
 	ct("Body", "CM_Body", true, Chams.setBody)
 	ct("Wings", "CM_Wings", true, Chams.setWings)
 	ct("Hat", "CM_Hat", true, Chams.setHat)
 	ct("Ghost body", "CM_Ghost", true, Chams.setGhostBody)
-	cs("Mode", "CM_Mode", { "Ghost", "Holo", "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, Chams.setMode)
+	cs("Mode", "CM_Mode", { "Ghost", "Custom", "Holo", "Rainbow", "Aurora", "Ice", "Fire", "Accent" }, function(v)
+		Chams.setMode(v)
+		chamsMode = v
+		crefresh()
+	end)
+	cc("Custom color", Color3.fromRGB(185, 145, 255), Chams.setCustom, isCustomMode)
 	cs("Speed", "CM_Speed", { "Normal", "Slow", "Fast" }, Chams.setSpeed)
 	cs("Fill", "CM_Fill", { "Strong", "Medium", "Light", "Full" }, Chams.setFill)
 	ct("Outline", "CM_Outline", true, Chams.setOutline)
@@ -2395,6 +3099,8 @@ local function unloadAll()
 	pcall(function() AngelWings.cleanup() end)
 	pcall(function() Hats.cleanup() end)
 	pcall(function() Chams.cleanup() end)
+	pcall(function() Cat.cleanup() end)
+	pcall(function() Orbits.cleanup() end)
 	pcall(function() accRoot:Destroy() end)
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	pcall(function() gui:Destroy() end)
